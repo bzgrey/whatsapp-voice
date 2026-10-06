@@ -5,10 +5,10 @@ The real server IP, hostname and phone numbers are in `deploy/LOCAL.md` (gitigno
 
 ## Production service (since 2026-10-06)
 - The full app runs from `/opt/whatsapp-voice` as `whatsapp-voice.service` (`systemd/whatsapp-voice.service`, runs `npm start`). It replaced `voice-test`, which is stopped and disabled.
-- Deploy from the Mac (no git remote; `.env`, `auth_session/` and `messages.db` live only on the server):
-  `rsync -az -e "ssh -i ~/.ssh/whatsapp_voice_vps" --exclude node_modules --exclude auth_session --exclude 'messages.db*' --exclude .env --exclude .git --exclude evals/real --exclude tmp ./ root@SERVER_IP:/opt/whatsapp-voice/`
-  then `npm ci` if dependencies changed, and `systemctl restart whatsapp-voice`. Restarting drops a live call: check `asterisk -rx "core show channels"` first.
-- `config.yaml` is synced by the rsync above. Voice commands rewrite the server's copy, so pull it back before overwriting it.
+- Deploy: push to GitHub (`bzgrey/whatsapp-voice`, public), then on the server:
+  `cd /opt/whatsapp-voice && git pull --ff-only && npm ci && systemctl restart whatsapp-voice`
+  (`npm ci` only if dependencies changed). Restarting drops a live call: check `asterisk -rx "core show channels"` first.
+- `.env`, `config.yaml`, `auth_session/` and `messages.db` exist only on the server (all gitignored). Edit the server's `config.yaml` there; voice commands rewrite it too.
 - WhatsApp is linked to the VPS (pairing code, 2026-10-06). The Mac's old link is unused. Logs: `journalctl -u whatsapp-voice`; status: `curl localhost:3000/health`.
 
 ## Server
