@@ -1,6 +1,14 @@
-# Server (phase 3 test setup)
+# Server
 
 Copies of what runs on the VPS, so the setup isn't only on the server. Set up 2026-10-06.
+
+## Production service (since 2026-10-06)
+- The full app runs from `/opt/whatsapp-voice` as `whatsapp-voice.service` (`systemd/whatsapp-voice.service`, runs `npm start`). It replaced `voice-test`, which is stopped and disabled.
+- Deploy from the Mac (no git remote; `.env`, `auth_session/` and `messages.db` live only on the server):
+  `rsync -az -e "ssh -i ~/.ssh/whatsapp_voice_vps" --exclude node_modules --exclude auth_session --exclude 'messages.db*' --exclude .env --exclude .git --exclude evals/real --exclude tmp ./ root@SERVER_IP:/opt/whatsapp-voice/`
+  then `npm ci` if dependencies changed, and `systemctl restart whatsapp-voice`. Restarting drops a live call: check `asterisk -rx "core show channels"` first.
+- `config.yaml` is synced by the rsync above. Voice commands rewrite the server's copy, so pull it back before overwriting it.
+- WhatsApp is linked to the VPS (pairing code, 2026-10-06). The Mac's old link is unused. Logs: `journalctl -u whatsapp-voice`; status: `curl localhost:3000/health`.
 
 ## Server
 - Hetzner Cloud CX23, Falkenstein/Nuremberg, **Ubuntu 26.04**, IP **SERVER_IP**, $7.09/mo.
@@ -12,7 +20,7 @@ Copies of what runs on the VPS, so the setup isn't only on the server. Set up 20
 Kosher phone → Yemot 077-XXX-XXXX (root ext: type=routing_ip → SERVER_IP:5060, routing_extension=assistant)
   → Asterisk (plain SIP/UDP in; TLS + SDES-SRTP out) → sip:<project>@sip.api.openai.com:5061
   → OpenAI webhook → https://SERVER-IP-DASHED.sslip.io/openai/webhook (Caddy → node :3000)
-  → voice-test/webhook.mjs accepts the call and attaches the sideband WebSocket
+  → src/call/webhook.ts accepts the call and attaches the sideband WebSocket (voice-test/webhook.mjs before 2026-10-06)
 ```
 
 ## Files
