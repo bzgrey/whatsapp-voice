@@ -238,7 +238,7 @@ Voice always works; the keypad is a fallback for noisy rooms and misrecognition.
 - **Two-way sync with SQLite:** the DB is the live source. The file is watched, and edits apply to the DB. Voice changes ("flag Yossi") rewrite the file. Last change wins. (YAML comments may be lost on rewrite; keep explanations in `config.example.yaml`.)
 
 ### 10.5 Models
-- **gpt-6-luna** for classification, chat summaries, and image description (if it accepts images; verify).
+- **gpt-6-luna** for classification, chat summaries, and image description (accepts images: verified 2026-10-06). Function tools on Chat Completions need `reasoning_effort: none`.
 - A cheap OpenAI transcription model for voice notes.
 - **Call model: to be chosen** (gpt-realtime-2.1-mini or gpt-live-1, see PLAN.md §3D). The call adapter is the only engine-specific code.
 - Model names live in config so they can be swapped without code changes.

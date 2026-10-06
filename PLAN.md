@@ -118,7 +118,7 @@ All server pieces run in **one Node process** (TypeScript via `tsx`) under PM2, 
 - **Layout:** `src/{whatsapp,ingest,briefing,call,config,db,llm}/`, `evals/`, `scripts/`, `test/` (SPEC §10.6).
 - **Version control:** Private GitHub repo. `.gitignore` excludes `node_modules/`, `.env`, `auth_session/`, `messages.db`, `*.sqlite`, `config.yaml`, `evals/real/`.
 - **VPS auth:** Read-only GitHub deploy key (`ssh-keygen -t ed25519`).
-- **Process management:** PM2 (`pm2 start "npx tsx src/server.ts" --name whatsapp-voice`, `pm2 save`, `pm2 startup`).
+- **Process management:** PM2 (`pm2 start npm --name whatsapp-voice -- start`, `pm2 save`, `pm2 startup`). `npm start` runs `tsx --env-file=.env src/server.ts`.
 - **Iteration:** test locally → commit/push → `git pull && npm ci && pm2 restart whatsapp-voice` on the VPS.
 - **Logging:** metadata only (chat names, counts, errors, costs), never message text.
 - **Backups:** none. If the VPS is lost, re-pair and start fresh.
@@ -156,19 +156,21 @@ All server pieces run in **one Node process** (TypeScript via `tsx`) under PM2, 
 - [x] **1. Local prototyping & gateway**
   - [x] Scaffold Node.js prototype (`db.js`, `whatsapp.js`, `server.js`, `classify.js`)
   - [x] Pair Baileys (pairing code) on Mac
-  - [ ] Verify a 1:1 message is intercepted and stored
-- [ ] **2. Rewrite to spec (TypeScript, `src/`)**
-  - [ ] Project setup: TypeScript, `tsx`, Vitest
-  - [ ] DB schema + migrations (SPEC §9)
-  - [ ] Config: YAML ↔ SQLite two-way sync, name → JID resolution
-  - [ ] Ingest: tier/mention/archive filtering, own messages, contacts/chats sync
-  - [ ] No read side-effects: no receipts, `markOnlineOnConnect: false`
-  - [ ] Enrichment queue: urgent/trivial, transcription, image description, retries
-  - [ ] Debounced per-chat summaries
-  - [ ] 4-day purge; metadata-only logging; usage/cost logging
-  - [ ] Briefing state machine (greeting, urgent, flagged, roll call, resume, drafts)
-  - [ ] Text-mode call simulator
-  - [ ] Evals: synthetic set, `export-sample` script, runner
+  - [x] Verify a 1:1 message is intercepted and stored (TypeScript server, 2026-10-06)
+- [x] **2. Rewrite to spec (TypeScript, `src/`)** (2026-10-06; `npm test`, `npm run simulate -- --demo`)
+  - [x] Project setup: TypeScript, `tsx`, Vitest
+  - [x] DB schema + migrations (SPEC §9)
+  - [x] Config: YAML ↔ SQLite two-way sync, name → JID resolution
+  - [x] Ingest: tier/mention/archive filtering, own messages, contacts/chats sync, group names
+  - [x] No read side-effects: no receipts, `markOnlineOnConnect: false`
+  - [x] Enrichment queue: urgent/trivial, transcription, image description, retries (all three verified on real messages; gpt-6-luna accepts images)
+  - [x] Debounced per-chat summaries
+  - [x] 4-day purge; metadata-only logging (libsignal's key-material console output suppressed); usage/cost logging
+  - [x] Briefing state machine (greeting, urgent, flagged, roll call, resume, drafts)
+  - [x] Text-mode call simulator
+  - [x] Evals: synthetic set, `export-sample` script, runner (synthetic: 100% urgent recall, summaries 4.75/5)
+  - [ ] Contact names: address-book names did **not** arrive on the Mac session (126 contacts, 0 names; Baileys app-state "failed to find key to decode mutation"). Push names are used meanwhile. Try re-linking the companion (SPEC open question 4)
+  - [ ] Label a real eval set (`npm run export-sample`)
 - [ ] **3. Inbound telephony registration**
   - [x] Register Yemot number (077-XXX-XXXX, 2026-10-06)
   - [ ] Asterisk: trunk to `sip:{OPENAI_PROJECT_ID}@sip.api.openai.com:5061;transport=tls` with TLS + SRTP
@@ -182,7 +184,7 @@ All server pieces run in **one Node process** (TypeScript via `tsx`) under PM2, 
   - [ ] Choose the call model: comprehension was weak on gpt-realtime-mini and 2.1-mini; gpt-live-1 untested. Check what the model hears (input transcript) to rule out audio quality
   - [ ] Yemot ad before routing on the free plan: accept, pay ~₪30–50/mo, or another number
   - [ ] Verify call recording on the VPS (voice notes)
-- [ ] **5. Voice agent**
+- [ ] **5. Voice agent** (state machine, tools and instructions are in `src/briefing/session.ts` and `src/call/tools.ts`; only the engine adapter is left)
   - [ ] Webhook + control WebSocket, caller ID / PIN check
   - [ ] Tools wired to the briefing state machine
   - [ ] Send gate: full read-back, keypad 1 only; quote-replies; drafts persisted

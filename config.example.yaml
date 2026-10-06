@@ -1,0 +1,47 @@
+# Copy to config.yaml (gitignored) and edit. The server watches config.yaml:
+# edits apply within a second or two. Voice commands ("flag Yossi", "mute the
+# building group") rewrite config.yaml, so comments there may be lost; keep
+# explanations here.
+
+# Caller ID of the kosher phone. Calls from this number skip the PIN.
+# Any format: 0535551234, +972535551234, 972535551234.
+my_phone: "0535551234"
+
+# PIN for calls from any other phone (digits only). 3 wrong tries hang up.
+pin: "1234"
+
+# Chats are written by name: the address-book name from your phone, the
+# person's own WhatsApp name, or a group's subject. A phone number or a JID
+# (…@s.whatsapp.net, …@g.us) also works and avoids ambiguity.
+# Unknown or ambiguous names are reported in the server log.
+
+# Read verbatim near the start of every call.
+flagged:
+  - Mom
+  - Yossi Cohen
+
+# Never ingested or mentioned. Archived chats are muted automatically.
+muted:
+  - Building committee
+
+# Groups ingested in full. Every other group is "mentions-only": a message
+# is kept only when it @mentions me or quote-replies to one of my messages.
+whitelisted_groups:
+  - Family
+
+# Add a small marker to messages sent by voice. Off by default.
+dictation_marker: false
+# The marker text, if on.
+dictation_marker_text: "🎙️"
+
+# After sending a reply, mark the chat unread again if it was unread before
+# (in case WhatsApp marks it read on my phone). See SPEC open question 9.
+restore_unread_after_send: true
+
+models:
+  classify: gpt-6-luna        # urgent / trivial per message
+  summarize: gpt-6-luna       # roll-call one-liners and drill-in summaries
+  vision: gpt-6-luna          # image descriptions
+  transcribe: gpt-4o-mini-transcribe
+  call: gpt-realtime-2.1-mini # phone-call model (still being chosen)
+  simulate: gpt-6-luna        # text model for scripts/simulate

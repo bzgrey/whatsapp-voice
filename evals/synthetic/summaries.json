@@ -1,0 +1,37 @@
+[
+  {
+    "chat": "Yossi Cohen",
+    "lines": [
+      "[Sun 20:10] Me: Do you need anything for the shiur?",
+      "[Mon 09:02] Yossi Cohen (new): Can I borrow your Ketzos for the week?",
+      "[Mon 09:03] Yossi Cohen (new): I can pick it up Wednesday after maariv"
+    ],
+    "must": ["borrow", "Ketzos", "Wednesday"]
+  },
+  {
+    "chat": "Family",
+    "isGroup": true,
+    "lines": [
+      "[Mon 18:00] Mom (new): Who is bringing salads for the first night?",
+      "[Mon 18:05] Dovid Levi (new): We can do two salads and a kugel",
+      "[Mon 18:06] Sruli (new): a photo: a baby covered in honey cake"
+    ],
+    "must": ["salad", "kugel"]
+  },
+  {
+    "chat": "Sruli",
+    "lines": [
+      "[Mon 19:40] Sruli (new): voice note: \"היי, רציתי לשאול אם אתה בא לחתונה של מנחם ביום שלישי. תגיד לי עד מחר\""
+    ],
+    "must": ["wedding", "Menachem", "Tuesday"]
+  },
+  {
+    "chat": "Mom",
+    "lines": [
+      "[Sun 12:00] Mom: Are you coming for Sukkos?",
+      "[Sun 12:30] Me: Yes, Thursday night",
+      "[Mon 08:00] Mom (new): Great! Abba will pick you up from the 9:15 bus at the central station"
+    ],
+    "must": ["Abba", "9:15"]
+  }
+]
