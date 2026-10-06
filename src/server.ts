@@ -38,7 +38,7 @@ const app = express();
 // The call webhook needs the raw body for its signature, so it goes before express.json().
 app.use(callRouter({ store, config, tasks, sender: wa, now: nowSec }));
 app.use(express.json());
-app.get('/health', (_req, res) => res.json({ ok: true, whatsapp: getWaStatus(store), pendingJobs: store.pendingJobCount() }));
+app.get('/health', (_req, res) => res.json({ ok: true, whatsapp: getWaStatus(store), pendingJobs: store.pendingJobCount(), contacts: store.contactCounts() }));
 app.get('/costs', (_req, res) => res.json(monthToDate(store)));
 app.get('/groups', async (_req, res) => {
   try { res.json(await wa.listGroups()); } catch (err) { res.status(503).json({ error: errMsg(err) }); }

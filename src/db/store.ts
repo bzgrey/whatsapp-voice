@@ -80,6 +80,11 @@ export class Store {
     return this.db.prepare('SELECT * FROM contacts WHERE jid = ? OR lid = ?').get(jid, jid) as ContactRow | undefined;
   }
 
+  /** How many contacts we have, and how many carry my address-book name (app-state sync working). */
+  contactCounts(): { total: number; named: number } {
+    return this.db.prepare('SELECT COUNT(*) AS total, COUNT(name) AS named FROM contacts').get() as { total: number; named: number };
+  }
+
   allContacts(): ContactRow[] {
     return this.db.prepare('SELECT * FROM contacts').all() as ContactRow[];
   }

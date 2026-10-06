@@ -1,0 +1,14 @@
+[Unit]
+Description=WhatsApp voice assistant (Baileys + call webhook)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/opt/whatsapp-voice
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=5
+# Only one process may use auth_session/; systemd guarantees a single instance.
+
+[Install]
+WantedBy=multi-user.target
