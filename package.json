@@ -4,14 +4,36 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node --env-file=.env server.js",
-    "dev": "node --env-file=.env --watch server.js"
+    "start": "tsx --env-file=.env src/server.ts",
+    "dev": "tsx watch --env-file=.env src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "simulate": "tsx --env-file=.env scripts/simulate.ts",
+    "purge": "tsx --env-file=.env scripts/purge.ts",
+    "costs": "tsx --env-file=.env scripts/costs.ts",
+    "export-sample": "tsx --env-file=.env scripts/export-sample.ts",
+    "evals": "tsx --env-file=.env evals/run.ts"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^7.0.0-rc14",
     "better-sqlite3": "^13.0.3",
     "express": "^5.2.1",
     "pino": "^10.4.0",
-    "qrcode-terminal": "^0.12.0"
+    "qrcode-terminal": "^0.12.0",
+    "ws": "^8.22.0",
+    "yaml": "^2.9.1",
+    "tsx": "^4.23.15"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.4",
+    "@types/qrcode-terminal": "^0.12.2",
+    "@types/ws": "^8.18.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

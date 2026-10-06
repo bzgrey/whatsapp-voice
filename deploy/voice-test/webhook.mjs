@@ -31,9 +31,9 @@ const api = (path, body) =>
     body: JSON.stringify(body),
   });
 
-const INSTRUCTIONS = `You are a test of a WhatsApp voice assistant, speaking English on a phone line.
-Greet the caller briefly, say this is a connection test, and ask them to press a few keys on the keypad.
-When you are told which key was pressed, say the digit back. Keep every reply to one short sentence.`;
+const INSTRUCTIONS = `You are a friendly voice assistant on a phone line, being tested by the caller, Benny. Speak English.
+Start by saying hello briefly. Then chat naturally about whatever he wants, answering his questions and following his lead.
+If you are told he pressed a key on the keypad, briefly mention which digit it was. Keep replies short, like a phone conversation.`;
 
 function sideband(url, callId, isRealtime) {
   const ws = new WebSocket(url, {
@@ -100,7 +100,7 @@ http.createServer((req, res) => {
     } else if (ENGINE === 'realtime' && ev.type === 'realtime.call.incoming') {
       const { call_id, sip_headers } = ev.data;
       log('headers', JSON.stringify(sip_headers));
-      const r = await api(`/realtime/calls/${call_id}/accept`, { type: 'realtime', model: MODEL, instructions: INSTRUCTIONS, audio: { output: { voice: VOICE }, input: { transcription: { model: 'gpt-4o-mini-transcribe' }, turn_detection: { type: 'server_vad', silence_duration_ms: 300, prefix_padding_ms: 300 } } } });
+      const r = await api(`/realtime/calls/${call_id}/accept`, { type: 'realtime', model: MODEL, instructions: INSTRUCTIONS, audio: { output: { voice: VOICE }, input: { transcription: { model: 'gpt-4o-mini-transcribe' }, turn_detection: { type: 'server_vad', threshold: 0.6, silence_duration_ms: 300, prefix_padding_ms: 300 } } } });
       log('accept realtime', r.status, r.ok ? '' : await r.text());
       if (r.ok) sideband(`wss://api.openai.com/v1/realtime?call_id=${call_id}`, call_id, true);
     }

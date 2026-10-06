@@ -5,4 +5,7 @@ messages.db
 messages.db-*
 *.sqlite
 *.sqlite-*
+config.yaml
+evals/real/
+tmp/
 .DS_Store
