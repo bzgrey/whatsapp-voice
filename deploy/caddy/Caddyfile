@@ -1,4 +1,5 @@
 # Public HTTPS endpoint for OpenAI webhooks. Certificate from Let's Encrypt.
+# Replace with your server's IP, dashed (see deploy/LOCAL.md).
 SERVER-IP-DASHED.sslip.io {
 	handle /healthz {
 		respond "ok" 200

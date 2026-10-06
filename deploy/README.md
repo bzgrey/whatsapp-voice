@@ -1,6 +1,7 @@
 # Server
 
 Copies of what runs on the VPS, so the setup isn't only on the server. Set up 2026-10-06.
+The real server IP, hostname and phone numbers are in `deploy/LOCAL.md` (gitignored); this file uses placeholders.
 
 ## Production service (since 2026-10-06)
 - The full app runs from `/opt/whatsapp-voice` as `whatsapp-voice.service` (`systemd/whatsapp-voice.service`, runs `npm start`). It replaced `voice-test`, which is stopped and disabled.
@@ -17,7 +18,7 @@ Copies of what runs on the VPS, so the setup isn't only on the server. Set up 20
 
 ## Call path
 ```
-Kosher phone → Yemot 077-XXX-XXXX (root ext: type=routing_ip → SERVER_IP:5060, routing_extension=assistant)
+Kosher phone → Yemot 077 number (root ext: type=routing_ip → SERVER_IP:5060, routing_extension=assistant)
   → Asterisk (plain SIP/UDP in; TLS + SDES-SRTP out) → sip:<project>@sip.api.openai.com:5061
   → OpenAI webhook → https://SERVER-IP-DASHED.sslip.io/openai/webhook (Caddy → node :3000)
   → src/call/webhook.ts accepts the call and attaches the sideband WebSocket (voice-test/webhook.mjs before 2026-10-06)

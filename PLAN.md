@@ -91,7 +91,7 @@ All server pieces run in **one Node process** (TypeScript via `tsx`) under PM2, 
 - **Retention:** everything older than **4 days** is purged, heard or not. Chat/contact metadata and config are kept. My phone is the full record.
 
 ### C. SIP Telephony Layer
-- **Provider:** Yemot HaMashiach, number **077-XXX-XXXX** (system number and password in `.env`). Twilio Israeli DID as a fallback.
+- **Provider:** Yemot HaMashiach, a 077 number (number in `deploy/LOCAL.md`; system number and password in `.env`). Twilio Israeli DID as a fallback.
 - **Yemot side:** root extension `type=routing_ip` with `routing_ip=<VPS IP>`, `routing_ip_port=5060`, `routing_extension=<user>`. Sends plain SIP to a fixed IP; reported free (no units). Managed via the API at `call2all.co.il/ym/api` (`GetTextFile` / `UploadTextFile` on `ivr2:/ext.ini`).
 - **Relay:** Asterisk on the VPS accepts Yemot's plain SIP (firewalled to Yemot's IPs) and dials OpenAI over TLS + SRTP. Can record call audio (voice notes) and pass caller ID and DTMF.
 - **Port (OpenAI side):** 5061 only. OpenAI rejects unencrypted 5060.
@@ -172,7 +172,7 @@ All server pieces run in **one Node process** (TypeScript via `tsx`) under PM2, 
   - [ ] Contact names: address-book names did **not** arrive on the Mac session (126 contacts, 0 names; Baileys app-state "failed to find key to decode mutation"). Push names are used meanwhile. Try re-linking the companion (SPEC open question 4)
   - [ ] Label a real eval set (`npm run export-sample`)
 - [ ] **3. Inbound telephony registration**
-  - [x] Register Yemot number (077-XXX-XXXX, 2026-10-06)
+  - [x] Register Yemot number (2026-10-06)
   - [ ] Asterisk: trunk to `sip:{OPENAI_PROJECT_ID}@sip.api.openai.com:5061;transport=tls` with TLS + SRTP
 - [ ] **4. API verification ($5 deposit)**
   - [x] Fund OpenAI; add `OPENAI_API_KEY` to `.env`

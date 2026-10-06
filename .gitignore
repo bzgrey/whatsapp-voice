@@ -9,3 +9,4 @@ config.yaml
 evals/real/
 tmp/
 .DS_Store
+deploy/LOCAL.md
