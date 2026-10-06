@@ -29,6 +29,8 @@ export interface CallIO {
   hangup(): Promise<void>;
   /** Run `fn` after `ms` (injectable for tests). */
   later(fn: () => void, ms: number): void;
+  /** Current time in ms. */
+  now(): number;
 }
 
 /**
@@ -43,6 +45,10 @@ export class RealtimeCall {
   private hangupPending = false;
   private hungUp = false;
   private queue: Promise<void> = Promise.resolve();
+  /** Estimated time (ms since epoch) the audio generated so far finishes playing on the line. */
+  private playoutUntil = 0;
+  /** A paused next part is waiting to be handed over. */
+  private waiting = false;
 
   constructor(
     private session: CallSession,
@@ -106,6 +112,9 @@ export class RealtimeCall {
     // Spoken to the end (not cut off by the caller): tell the session what was said,
     // so it counts as heard only once enough of the handed-out part was really spoken.
     if (completed && spoke) this.session.confirmSpoken(transcripts.length ? transcripts.join(' ') : undefined);
+    // Generation runs ahead of playback; keep a running estimate of when the audio ends.
+    const spokenMs = (wordCount(transcripts.join(' ')) / WORDS_PER_SECOND) * 1000;
+    this.playoutUntil = Math.max(this.io.now(), this.playoutUntil) + spokenMs;
 
     if (completed && spoke && this.hangupPending && !calls.length) {
       const words = (r.output ?? []).flatMap((o) => o.content ?? []).map((c) => wordCount(c.transcript ?? '')).reduce((a, b) => a + b, 0);
@@ -114,7 +123,8 @@ export class RealtimeCall {
       return;
     }
 
-    let needResponse = false;
+    const outputs: object[] = [];
+    let pauseMs = 0;
     for (const c of calls) {
       let args: Record<string, unknown> = {};
       try { args = JSON.parse(c.arguments || '{}'); } catch { /* model sent bad JSON; tool gets no args */ }
@@ -122,14 +132,23 @@ export class RealtimeCall {
       // Metadata only: which tool, and whether the server held the briefing back.
       log.info(`call ${this.session.callId}: tool ${c.name}${out.output.startsWith('Not yet') ? ' (refused: not spoken yet)' : ''}`);
       if (out.hangup) this.armHangup();
-      this.io.send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: c.call_id, output: out.output } });
-      needResponse = true;
+      pauseMs = Math.max(pauseMs, out.pauseMs ?? 0);
+      outputs.push({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: c.call_id, output: out.output } });
     }
-    for (const note of this.notes.splice(0)) {
-      this.io.send(noteItem(note));
-      needResponse = true;
+    if (pauseMs && outputs.length) {
+      // Hold the next part until the current one has played, plus the pause.
+      this.waiting = true;
+      this.io.later(() => { this.waiting = false; this.flush(outputs); }, Math.max(0, this.playoutUntil - this.io.now()) + pauseMs);
+      return;
     }
-    if (needResponse) this.createResponse();
+    this.flush(outputs);
+  }
+
+  private flush(outputs: object[]) {
+    for (const o of outputs) this.io.send(o);
+    const notes = this.notes.splice(0);
+    for (const note of notes) this.io.send(noteItem(note));
+    if (outputs.length || notes.length) this.createResponse();
   }
 
   /**
@@ -138,6 +157,7 @@ export class RealtimeCall {
    */
   private deliver(out: Output, interrupt = false) {
     if (out.hangup) this.armHangup();
+    if (this.waiting) { this.notes.push(out.output); return; }
     if (this.responding) {
       this.notes.push(out.output);
       if (interrupt && !this.cancelSent) {

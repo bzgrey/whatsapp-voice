@@ -85,6 +85,7 @@ export function callRouter(deps: SessionDeps) {
         if (!h.ok) throw new Error(`hangup ${h.status}`);
       },
       later: (fn, ms) => void setTimeout(fn, ms),
+      now: () => Date.now(),
     }, deps.store, model, debug);
     const started = Date.now();
     ws.on('open', () => void call.start().catch((err) => log.error(`call ${session.callId}: opening failed: ${errMsg(err)}`)));

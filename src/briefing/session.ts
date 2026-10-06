@@ -30,6 +30,8 @@ export interface SessionDeps {
 /** What the engine adapter passes back to the model. `hangup`: end the call once this is spoken. */
 export interface Output {
   output: string;
+  /** Leave this much silence after the previous part finishes playing before saying this one. */
+  pauseMs?: number;
   hangup?: boolean;
 }
 
@@ -44,6 +46,10 @@ const PIN_TRIES = 3;
 const SUMMARY_TIMEOUT_MS = 8000;
 /** Don't warn about a WhatsApp reconnect blip shorter than this. */
 const WA_WARN_AFTER_SECONDS = 120;
+
+/** Silence between urgent/flagged chats, and before the roll call. */
+export const PAUSE_BETWEEN_CHATS_MS = 1500;
+export const PAUSE_BEFORE_ROLLCALL_MS = 2000;
 
 const NEXT = 'When you have said all of it out loud, call next_item to continue the briefing.';
 /** Share of a part's content words that must appear in what the model said. */
@@ -88,6 +94,8 @@ export class CallSession {
   private spoken = new Set<string>();
   /** Times next_item was refused for the current part (we give up insisting after a couple). */
   private refusals = 0;
+  private lastItemKind: Item['kind'] | null = null;
+  private nextPause = 0;
   private activeDraft: DraftRow | null = null;
   /** Drafts written during this call; only these are replaced by a new draft_message. */
   private ownDrafts = new Set<number>();
@@ -237,6 +245,11 @@ export class CallSession {
       const item = this.stillRelevant(step.item);
       if (!item) continue;
       this.hand(itemMessageIds(item), itemChat(item));
+      // A short silence between urgent/flagged chats and before the roll call (not within it).
+      this.nextPause = this.lastItemKind === null ? 0
+        : item.kind === 'rollcall' ? (this.lastItemKind === 'rollcall' ? 0 : PAUSE_BEFORE_ROLLCALL_MS)
+        : PAUSE_BETWEEN_CHATS_MS;
+      this.lastItemKind = item.kind;
       store.updateCall(this.callId, { current_chat: item.kind === 'rollcall' ? item.entries[0]!.jid : item.jid, in_briefing: true });
       out.push(itemPrompt(item));
       out.push(item.kind === 'flagged' && item.mode === 'ask' ? 'After reading or summarizing it, call next_item.' : NEXT);
@@ -274,7 +287,11 @@ export class CallSession {
     if (this.state === 'ended') return { output: 'The call has ended.' };
     try {
       switch (name) {
-        case 'next_item': return { output: await this.advance(!!args.skipped) };
+        case 'next_item': {
+          this.nextPause = 0;
+          const output = await this.advance(!!args.skipped);
+          return { output, pauseMs: this.nextPause || undefined };
+        }
         case 'skip_briefing': return { output: this.skipBriefing() };
         case 'read_chat': return { output: await this.readChat(args.chat) };
         case 'summarize_chat': return { output: await this.summarizeChat(args.chat) };

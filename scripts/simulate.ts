@@ -84,6 +84,7 @@ async function runModel() {
       const out = await session.tool(tc.function.name, a);
       console.log(dim(out.output.split('\n').map((l) => `    ${l}`).join('\n')));
       if (out.hangup) hangup = true;
+      if (out.pauseMs) console.log(dim(`  (pause ${(out.pauseMs / 1000).toFixed(1)} s)`));
       messages.push({ role: 'tool', tool_call_id: tc.id, content: out.output });
     }
   }

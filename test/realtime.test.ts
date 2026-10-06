@@ -20,6 +20,7 @@ function setup(caller = '0535551234', seed: (store: ReturnType<typeof makeStore>
     send: (e) => sent.push(e),
     hangup: async () => { hungUp++; },
     later: (fn, ms) => timers.push({ fn, ms }),
+    now: () => 0,
   }, store, 'gpt-realtime-2.1-mini');
   const notes = () => sent.filter((e) => e.item?.role === 'user').map((e) => e.item.content[0].text as string);
   const outputs = () => sent.filter((e) => e.item?.type === 'function_call_output').map((e) => e.item.output as string);
@@ -27,7 +28,7 @@ function setup(caller = '0535551234', seed: (store: ReturnType<typeof makeStore>
     call.onEvent({ type: 'response.done', response: { status, output, usage: { input_tokens: 100, output_tokens: 50, input_token_details: { audio_tokens: 80 }, output_token_details: { audio_tokens: 40 } } } });
   const said = (transcript = 'ok') => ({ type: 'message', content: [{ transcript }] });
   const fn = (name: string, args = {}) => ({ type: 'function_call', name, call_id: `c_${name}`, arguments: JSON.stringify(args) });
-  return { store, sender, session, call, sent, timers, notes, outputs, done, said, fn, hungUp: () => hungUp };
+  return { store, config, sender, session, call, sent, timers, notes, outputs, done, said, fn, hungUp: () => hungUp };
 }
 
 describe('realtime adapter', () => {
@@ -83,6 +84,25 @@ describe('realtime adapter', () => {
     t.timers[0]!.fn(); // the backstop doesn't hang up twice
     await new Promise((r) => setImmediate(r));
     expect(t.hungUp()).toBe(1);
+  });
+
+  it('pauses between flagged chats and before the roll call, after the audio has played', async () => {
+    const t = setup(undefined, (s) => {
+      s.upsertChat({ jid: '972509999999@s.whatsapp.net' }, 0);
+      addMessage(s, YOSSI, { raw_text: 'can I borrow the sefer' });
+      addMessage(s, MOM, { raw_text: 'are you coming home for Sukkos' }); // newest flagged chat goes first
+    });
+    t.config.applyVoice({ jid: YOSSI, aliases: [], isGroup: false, names: ['Yossi Cohen'], label: 'Yossi Cohen', lastActivity: null }, 'flag');
+    await t.call.start(); // counts + first flagged chat, no pause
+    const said = 'One two three four five six seven eight nine ten'; // 10 words = 4 s of audio
+    await t.done([t.said(`Mom: are you coming home for Sukkos. ${said}`), t.fn('next_item')]);
+    const sentBefore = t.outputs().length;
+    expect(t.timers.at(-1)!.ms).toBeGreaterThanOrEqual(1500 + 4000);
+    expect(t.outputs().length).toBe(sentBefore); // held back
+    await t.call.onEvent({ type: 'input_audio_buffer.dtmf_event_received', event: '3' }); // not lost while waiting
+    t.timers.at(-1)!.fn();
+    expect(t.outputs().at(-1)).toContain('can I borrow the sefer');
+    expect(t.notes().at(-1)).toMatch(/pressed 3/);
   });
 
   it('hangs up after three wrong PINs', async () => {
