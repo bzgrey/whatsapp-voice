@@ -113,7 +113,7 @@ export class CallSession {
       return { output: 'The caller is not verified yet. Say only: "Please enter your PIN on the keypad." Reveal nothing else and call no tools until the PIN is accepted.' };
     }
     if (this.state === 'ended') return { output: 'Say only: "Sorry, this line is private." Then stop.', hangup: true };
-    return { output: `The call just connected. ${await this.advance()}` };
+    return { output: `The call just connected. Start immediately with the following; no greeting.\n${await this.advance()}` };
   }
 
   // ---------- briefing ----------
@@ -245,10 +245,10 @@ export class CallSession {
     if (!this.briefingDone) {
       this.briefingDone = true;
       store.updateCall(this.callId, { current_chat: null, in_briefing: false });
-      out.push('Briefing finished. Say "That\'s everything new." and ask if they want anything else: more about a chat, a reply, or something from the last few days.');
-      said.push("That's everything new.");
+      out.push('Briefing finished. Say only: "That\'s everything." Then wait silently for him to speak.');
+      said.push("That's everything.");
     } else {
-      out.push('The briefing is already finished. Ask what they would like to do.');
+      out.push('The briefing is already finished. Say "That\'s everything." if you haven\'t, then wait for him.');
     }
     const prompt = out.join('\n');
     // Only statements (e.g. the greeting) still need saying before anything else is handed out.
@@ -299,7 +299,7 @@ export class CallSession {
     this.pos = this.steps.length;
     this.briefingDone = true;
     this.d.store.updateCall(this.callId, { current_chat: null, in_briefing: false });
-    return 'Briefing skipped. Ask what they would like to do.';
+    return 'Briefing skipped. Say "Okay." and wait for him.';
   }
 
   private async resolve(chat: string | undefined): Promise<{ entry?: Entry; ask?: string }> {
@@ -429,7 +429,7 @@ export class CallSession {
       case '9':
         return { output: this.activeDraft ? this.cancelDraft() : 'The caller pressed 9 (cancel), but nothing is pending. Ignore it unless they ask.' };
       case '#':
-        return { output: `The caller pressed #. ${this.briefingDone ? 'The briefing is already finished. Ask what they would like to do.' : this.skipBriefing()}` };
+        return { output: `The caller pressed #. ${this.briefingDone ? 'The briefing is already finished; ignore it.' : this.skipBriefing()}` };
       default:
         return null;
     }

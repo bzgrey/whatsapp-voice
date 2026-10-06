@@ -24,7 +24,7 @@ describe('briefing order', () => {
 
     const { items, counts } = buildBriefing(gatherUnheard(store), store);
     expect(counts).toEqual({ urgent: 1, flagged: 1, others: 3 });
-    expect(countsSentence(counts)).toBe('You have 1 urgent message, 1 flagged chat, and 3 others.');
+    expect(countsSentence(counts)).toBe('1 urgent, 1 flagged, 3 others.');
     expect(items.map((i) => i.kind)).toEqual(['urgent', 'flagged', 'rollcall']);
     const rollcall = items[2]!;
     if (rollcall.kind !== 'rollcall') throw new Error();
@@ -35,8 +35,8 @@ describe('briefing order', () => {
   });
 
   it('says so when nothing is new', () => {
-    expect(countsSentence({ urgent: 0, flagged: 0, others: 0 })).toBe('You have no new messages.');
-    expect(countsSentence({ urgent: 0, flagged: 0, others: 2 })).toBe('You have 2 chats with new messages.');
+    expect(countsSentence({ urgent: 0, flagged: 0, others: 0 })).toBe('No new messages.');
+    expect(countsSentence({ urgent: 0, flagged: 0, others: 2 })).toBe('2 chats.');
   });
 
   it('asks before reading long flagged chats', () => {

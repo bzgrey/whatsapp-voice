@@ -34,7 +34,7 @@ describe('realtime adapter', () => {
   it('speaks the opening, runs tool calls, and confirms heard only on a completed spoken response', async () => {
     const t = setup(undefined, (s) => addMessage(s, MOM, { raw_text: 'call me' }));
     await t.call.start();
-    expect(t.notes()[0]).toMatch(/You have 1 flagged chat/);
+    expect(t.notes()[0]).toMatch(/1 flagged/);
     expect(t.sent.at(-1)).toEqual({ type: 'response.create' });
 
     expect(t.notes()[0]).toContain('call me');

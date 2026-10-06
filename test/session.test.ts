@@ -20,7 +20,7 @@ describe('auth', () => {
     const { call } = setup();
     const s = call('+972-53-555-1234');
     expect(s.verified).toBe(true);
-    expect((await s.opening()).output).toContain('You have no new messages.');
+    expect((await s.opening()).output).toContain('No new messages.');
   });
 
   it('asks other callers for the PIN and hangs up after 3 wrong tries', async () => {
@@ -52,7 +52,7 @@ describe('briefing flow', () => {
     addMessage(store, YOSSI, { raw_text: 'sefer?' });
     const s = call();
     const open = (await s.opening()).output;
-    expect(open).toContain('You have 1 flagged chat and 1 other.');
+    expect(open).toContain('1 flagged, 1 other.');
     expect(open).toContain('call me when you get a chance today');
     s.confirmSpoken('Okay.'); // too little to count
     expect(store.unheard()).toHaveLength(2);
@@ -125,7 +125,7 @@ describe('briefing flow', () => {
     expect(open).toMatch(/Your last call dropped during Yossi Cohen\. Resume\?/);
     s2.confirmSpoken();
     const next = (await s2.tool('next_item', {})).output;
-    expect(next).toContain('You have 1 chat with new messages.');
+    expect(next).toContain('1 chat.');
     expect(next).toContain('Yossi');
     expect(next).not.toContain('call me');
   });

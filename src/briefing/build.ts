@@ -153,16 +153,15 @@ export function buildBriefing(groups: ChatGroup[], store: Store): { items: Item[
 
 const n = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
 
-/** "You have 1 urgent message, 3 flagged chats, and 12 others." */
+/** Terse counts: "1 urgent, 3 flagged, 12 others." / "No new messages." */
 export function countsSentence(c: Counts): string {
   const parts = [
-    c.urgent && n(c.urgent, 'urgent message', 'urgent messages'),
-    c.flagged && n(c.flagged, 'flagged chat', 'flagged chats'),
-    c.others && (c.urgent || c.flagged ? `${c.others} other${c.others === 1 ? '' : 's'}` : n(c.others, 'chat with new messages', 'chats with new messages')),
+    c.urgent && `${c.urgent} urgent`,
+    c.flagged && `${c.flagged} flagged`,
+    c.others && (c.urgent || c.flagged ? `${c.others} other${c.others === 1 ? '' : 's'}` : n(c.others, 'chat', 'chats')),
   ].filter(Boolean) as string[];
-  if (!parts.length) return 'You have no new messages.';
-  const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')}${parts.length > 2 ? ',' : ''} and ${parts.at(-1)}` : parts[0];
-  return `You have ${list}.`;
+  if (!parts.length) return 'No new messages.';
+  return `${parts.join(', ')}.`;
 }
 
 /** The text handed to the model for one item. */
@@ -170,22 +169,22 @@ export function itemPrompt(item: Item): string {
   const verbatim = (lines: string[]) => lines.map((l) => `  ${l}`).join('\n');
   switch (item.kind) {
     case 'urgent':
-      return `URGENT, from ${item.name}${item.isGroup ? ' (group)' : ''}. Say it's from ${item.name}, then read these verbatim, in their original language, without translating:\n${verbatim(item.lines)}`;
+      return `Say "Urgent, from ${item.name}:" then read these verbatim, in their original language, without translating:\n${verbatim(item.lines)}`;
     case 'flagged': {
       const head = `Flagged chat: ${item.name}${item.isGroup ? ' (group)' : ''}, ${item.count} message${item.count === 1 ? '' : 's'}.`;
       const tail = item.trivial ? `\nThen mention: plus ${item.trivial}.` : '';
-      if (!item.count) return `Flagged chat: ${item.name}, just ${item.trivial}. Say so in one short sentence.`;
+      if (!item.count) return `Say only: "${item.name}: just ${item.trivial}."`;
       if (item.mode === 'ask') {
         const mins = Math.max(1, Math.round(item.seconds / 60));
         return `${head} It's long, about ${mins} minute${mins === 1 ? '' : 's'} to read. Ask: "${item.name} has ${item.count} messages, about ${mins} minute${mins === 1 ? '' : 's'}. Read them all or summarize?" Then call read_chat or summarize_chat with chat "${item.name}" accordingly.`;
       }
       const intro = item.mode === 'summary_then_read' && item.summary
-        ? `Give this quick summary first: "${item.summary}". Then read the messages verbatim.`
-        : 'Read the messages verbatim.';
+        ? `Say "${item.name}:" and this quick summary: "${item.summary}". Then read the messages verbatim.`
+        : `Say "${item.name}:" then read the messages verbatim. Don't announce that it's flagged or how many there are.`;
       return `${head} ${intro} Keep their original language; don't translate unless asked:\n${verbatim(item.lines)}${tail}`;
     }
     case 'rollcall':
-      return `Roll call. For each chat, say the name, the count and the summary in one short sentence, in English:\n${item.entries.map((e) => `  ${e.name}, ${e.line}`).join('\n')}`;
+      return `Roll call. Say each line as written, one after another, with no introduction:\n${item.entries.map((e) => `  ${e.name}, ${e.line}.`).join('\n')}`;
   }
 }
 
