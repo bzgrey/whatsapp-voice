@@ -70,7 +70,7 @@ describe('briefing flow', () => {
     addMessage(store, YOSSI, { raw_text: 'sefer?' });
     const s = call();
     await s.opening();
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 2; i++) {
       const r = (await s.tool('next_item', {})).output;
       expect(r).toMatch(/^Not yet: you haven't said the previous part out loud/);
       expect(r).toContain('a photo of the sukkah');
@@ -82,6 +82,32 @@ describe('briefing flow', () => {
     // Keypad 2 also moves on.
     expect((await s.dtmf('2'))!.output).toMatch(/Briefing finished/);
     expect(store.unheard()).toHaveLength(0);
+  });
+
+  it('does not count the greeting as having read the flagged chat (the third-call bug)', async () => {
+    const { store, call } = setup();
+    addMessage(store, MOM, { type: 'image', media_desc: 'the new sukkah decorations', raw_text: null });
+    addMessage(store, MOM, { raw_text: 'are you coming home for Sukkos?' });
+    addMessage(store, YOSSI, { raw_text: 'sefer?' });
+    const s = call();
+    await s.opening();
+    s.confirmSpoken('You have one flagged chat and one other chat with new messages.');
+    expect(store.unheard()).toHaveLength(3);
+    expect((await s.tool('next_item', {})).output).toMatch(/^Not yet/);
+    s.confirmSpoken('Mom sent a photo of the new sukkah decorations, and asks: are you coming home for Sukkos?');
+    expect(store.unheard().map((m) => m.chat_jid)).toEqual([YOSSI]);
+    expect((await s.tool('next_item', {})).output).toContain('Roll call');
+  });
+
+  it('stops insisting after two refusals rather than looping', async () => {
+    const { store, call } = setup();
+    addMessage(store, MOM, { raw_text: 'שלום, מתי אתה בא הביתה?' });
+    const s = call();
+    await s.opening();
+    s.confirmSpoken('Mom asks when you are coming home.'); // translated instead of verbatim
+    expect((await s.tool('next_item', {})).output).toMatch(/^Not yet/);
+    expect((await s.tool('next_item', {})).output).toMatch(/^Not yet/);
+    expect((await s.tool('next_item', {})).output).toMatch(/Briefing finished/);
   });
 
   it('offers to resume after a drop, and skips what was heard', async () => {

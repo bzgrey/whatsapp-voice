@@ -119,6 +119,8 @@ export class RealtimeCall {
       let args: Record<string, unknown> = {};
       try { args = JSON.parse(c.arguments || '{}'); } catch { /* model sent bad JSON; tool gets no args */ }
       const out = await this.session.tool(c.name ?? '', args);
+      // Metadata only: which tool, and whether the server held the briefing back.
+      log.info(`call ${this.session.callId}: tool ${c.name}${out.output.startsWith('Not yet') ? ' (refused: not spoken yet)' : ''}`);
       if (out.hangup) this.armHangup();
       this.io.send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: c.call_id, output: out.output } });
       needResponse = true;

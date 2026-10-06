@@ -4,7 +4,7 @@ import type { DraftRow, MessageRow } from '../db/types.ts';
 import type { Tasks } from '../llm/tasks.ts';
 import { RETENTION_SECONDS } from '../env.ts';
 import { errMsg, log } from '../log.ts';
-import { displayName } from '../config/names.ts';
+import { displayName, normalizeName } from '../config/names.ts';
 import { normalizePhone } from '../config/phone.ts';
 import { buildDirectory, resolveSpokenWithFallback, type Entry } from '../config/resolve.ts';
 import { chatContext, refreshSummaryLine, senderNamer } from '../ingest/summaries.ts';
@@ -12,7 +12,7 @@ import { getWaStatus } from '../whatsapp/status.ts';
 import {
   buildBriefing, countsSentence, gatherUnheard, itemChat, itemMessageIds, itemPrompt, itemSpeakable, type Item,
 } from './build.ts';
-import { messageContent, renderMessages, sincePhrase, wordCount } from './render.ts';
+import { messageContent, renderMessages, sincePhrase } from './render.ts';
 
 /** Sends WhatsApp messages. Only the keypad-1 path in CallSession calls it. */
 export interface Sender {
@@ -45,7 +45,22 @@ const SUMMARY_TIMEOUT_MS = 8000;
 /** Don't warn about a WhatsApp reconnect blip shorter than this. */
 const WA_WARN_AFTER_SECONDS = 120;
 
-const NEXT = 'When you have finished, call next_item to continue the briefing.';
+const NEXT = 'When you have said all of it out loud, call next_item to continue the briefing.';
+/** Share of a part's content words that must appear in what the model said. */
+const SPOKEN_COVERAGE = 0.5;
+/** After this many refusals for one part, let next_item through rather than loop. */
+const MAX_REFUSALS = 2;
+
+/** Distinctive words of a text (any script), for checking what was actually said. */
+function contentWords(s: string): Set<string> {
+  return new Set(normalizeName(s).split(' ').filter((w) => w.length >= 3 && !STOP.has(w)));
+}
+const STOP = new Set(['the', 'and', 'you', 'your', 'are', 'for', 'with', 'that', 'this', 'has', 'have', 'message', 'messages', 'says', 'said', 'from', 'photo', 'plus']);
+const coverage = (need: Set<string>, got: Set<string>) => {
+  let hit = 0;
+  for (const w of need) if (got.has(w)) hit++;
+  return hit / need.size;
+};
 
 /**
  * One phone call: auth, the automatic briefing, free conversation, and the
@@ -69,8 +84,10 @@ export class CallSession {
    * The last thing handed out that the model must say out loud before the
    * briefing moves on, and how many of its words have been spoken so far.
    */
-  private pending: { prompt: string; words: number } | null = null;
-  private spokenWords = 0;
+  private pending: { prompt: string; need: Set<string> } | null = null;
+  private spoken = new Set<string>();
+  /** Times next_item was refused for the current part (we give up insisting after a couple). */
+  private refusals = 0;
   private activeDraft: DraftRow | null = null;
   /** Drafts written during this call; only these are replaced by a new draft_message. */
   private ownDrafts = new Set<number>();
@@ -142,22 +159,23 @@ export class CallSession {
    */
   confirmSpoken(said?: string) {
     if (said !== undefined && this.pending) {
-      this.spokenWords += wordCount(said);
-      // At least 40% of the expected words (capped): a bare "okay" doesn't count.
-      const needed = Math.max(2, Math.min(Math.ceil(this.pending.words * 0.4), 25));
-      if (this.spokenWords < needed) return;
+      for (const w of contentWords(said)) this.spoken.add(w);
+      if (coverage(this.pending.need, this.spoken) < SPOKEN_COVERAGE) return;
     }
     this.pending = null;
-    this.spokenWords = 0;
+    this.spoken.clear();
+    this.refusals = 0;
     if (!this.handed.length) return;
     this.d.store.markHeard(this.handed, this.d.now());
     this.handed = [];
   }
 
-  /** Remember what must be said out loud before moving on. */
+  /** Remember what must be said out loud before moving on (judged by its content words). */
   private expect(prompt: string, speakable: string) {
-    this.pending = { prompt, words: wordCount(speakable) };
-    this.spokenWords = 0;
+    const need = contentWords(speakable);
+    this.pending = need.size ? { prompt, need } : null;
+    this.spoken.clear();
+    this.refusals = 0;
   }
 
   private hand(ids: number[], chat: string | null) {
@@ -171,7 +189,7 @@ export class CallSession {
    * out loud yet, unless the caller asked to skip.
    */
   private async advance(skip = false): Promise<string> {
-    if (this.pending && !skip) {
+    if (this.pending && !skip && this.refusals++ < MAX_REFUSALS) {
       return `Not yet: you haven't said the previous part out loud. Say it to the caller now, then call next_item (or call next_item with skipped: true if they asked to skip it):\n${this.pending.prompt}`;
     }
     this.confirmSpoken();
@@ -183,9 +201,10 @@ export class CallSession {
     const { store } = this.d;
     const out: string[] = [];
     const said: string[] = [];
+    // What must be heard is the item itself; the greeting before it doesn't count towards it.
     const done = (speakable: string) => {
       const prompt = out.join('\n');
-      this.expect(prompt, [...said, speakable].join(' '));
+      this.expect(prompt, speakable || said.join(' '));
       return prompt;
     };
     while (this.pos < this.steps.length) {
