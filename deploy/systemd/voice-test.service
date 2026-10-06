@@ -1,0 +1,12 @@
+[Unit]
+Description=Phase 3 OpenAI SIP webhook test
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/voice-test
+EnvironmentFile=/opt/voice-test/.env
+ExecStart=/usr/bin/node webhook.mjs
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

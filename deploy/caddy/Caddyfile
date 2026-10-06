@@ -1,0 +1,8 @@
+# Public HTTPS endpoint for OpenAI webhooks. Certificate from Let's Encrypt.
+SERVER-IP-DASHED.sslip.io {
+	handle /healthz {
+		respond "ok" 200
+	}
+	# Node app (webhook + control) will listen on 3000.
+	reverse_proxy 127.0.0.1:3000
+}

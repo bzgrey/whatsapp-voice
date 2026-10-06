@@ -1,6 +1,6 @@
 # WhatsApp Voice Assistant: Design Spec
 
-> Written 2026-10-05 from a design interview. Supersedes the reporting, urgency and send-message parts of [PLAN.md](PLAN.md). Infrastructure in PLAN.md (Baileys, Hetzner, Yemot → OpenAI Realtime SIP, gpt-6-luna, SQLite) is unchanged unless noted.
+> Written 2026-10-05 from a design interview. Supersedes the reporting, urgency and send-message parts of [PLAN.md](PLAN.md). Infrastructure in PLAN.md (Baileys, Hetzner, Yemot → Asterisk relay → OpenAI Realtime SIP, gpt-6-luna, SQLite) is unchanged unless noted.
 
 ## 1. Summary of decisions
 
@@ -14,7 +14,7 @@
 | Outbound calls | **None** for now (future phase) |
 | Sending | Verbatim or AI-phrased, full read-back, **keypad 1 to send** |
 | Security | Kosher phone's caller ID goes straight in; any other phone needs a PIN |
-| Budget | ~$10/month |
+| Budget | ~$12/month |
 
 ## 2. Aggregation model
 
@@ -160,17 +160,17 @@ Voice always works; the keypad is a fallback for noisy rooms and misrecognition.
 - **Shabbos/Yom Tov:** nothing special. The system keeps ingesting; I won't call.
 - **Health:** no notifications to family. Only the one-line warning in the greeting when WhatsApp is disconnected or logged out.
 - **Names:** from my phone's contact names (WhatsApp address-book sync). Fall back to push name, then number.
-- **Budget:** ~$10/month. Voice-note transcription and image description must fit within this (at ~1,500 messages/month they cost cents, but cap image descriptions per chat as in §2.5).
+- **Budget:** ~$12/month (raised from $10 on 2026-10-06 after Hetzner's 2026 price increase). Voice-note transcription and image description must fit within this (at ~1,500 messages/month they cost cents, but cap image descriptions per chat as in §2.5).
 
 ## 8. Open questions (to verify, mostly in phase 3)
 
-1. **Recording my voice for voice notes.** With direct SIP, audio flows carrier ↔ OpenAI and never reaches the VPS. Need to check whether the Realtime API exposes input audio to the control WebSocket, or whether the call has to be bridged through the VPS. Fallback: drop voice-note sending, or send TTS (not my voice).
-2. **DTMF over OpenAI Realtime SIP.** Confirm keypad presses arrive as events. If not, the PIN and keypad-1 confirmation need a Yemot IVR step in front, or a voice fallback.
+1. **Recording my voice for voice notes.** Call audio passes through the Asterisk relay on the VPS (§10.1), so it can be recorded there. Verify in phase 3. Fallback: drop voice-note sending, or send TTS (not my voice).
+2. **DTMF over OpenAI Realtime SIP.** OpenAI's docs list a `transport.dtmf.received` sideband event; confirm keypad presses survive Yemot → Asterisk → OpenAI and arrive as events. If not, the PIN and keypad-1 confirmation need a Yemot IVR step in front, or a voice fallback.
 3. **Caller ID through Yemot.** Confirm the original caller's number reaches OpenAI's `realtime.call.incoming` SIP headers and isn't replaced by the Yemot number.
 4. **Contact names in Baileys.** Confirm address-book names arrive via app-state sync (`contacts.upsert` / `contacts.update` `name`) for a linked companion device.
 5. **Archive state in Baileys.** Confirm `chats.update` delivers `archived` reliably; snapshot it at startup.
 6. **@mention detection under LID.** Mentions may reference my `@lid` rather than my phone JID; match both.
-7. **Realtime-mini cost per minute** (from PLAN.md) still to measure; it decides whether the ~$10 budget holds.
+7. ~~Realtime-mini cost per minute~~ Measured 2026-10-06: ~1.7–2¢/min on the mini models. Model choice still open (comprehension over the phone line was weak; see PLAN.md §3D).
 8. ~~Data retention~~ Decided in §10.8: everything older than 4 days is deleted.
 9. **No read side-effects.** Confirm that Baileys sends no read receipts unless `readMessages` is called, that `markOnlineOnConnect: false` keeps the companion from showing me "online" (and from suppressing notifications on my phone), and whether sending a reply from the companion marks that chat read on my phone. Requirement: it must not (§3.7). If WhatsApp does this on its own, the fallback is to mark the chat unread again straight after sending (Baileys `chatModify({ markRead: false }, jid)`). Also check that no read receipts reach the sender.
 
@@ -217,7 +217,7 @@ Voice always works; the keypad is a fallback for noisy rooms and misrecognition.
 
 ### 10.1 Architecture
 - **One Node process** under PM2: Baileys, ingest, enrichment worker, webhook, call control. One SQLite file.
-- **Audio path: direct SIP** (Yemot → OpenAI Realtime SIP), as in PLAN.md. Phase 3 must test keypad (DTMF) events, caller ID and input-audio access first. If any fail, the fallback is a VPS bridge (Yemot → VPS → OpenAI Realtime WebSocket), decided then.
+- **Audio path: Asterisk relay** (Yemot `routing_ip` → Asterisk on the VPS → OpenAI Realtime SIP). Yemot's `routing_ip` sends plain SIP (UDP 5060) to a fixed IP, while OpenAI requires TLS on 5061 with SRTP, so a direct connection isn't possible. Asterisk converts between them, and gives the VPS access to call audio (voice notes) and caller ID. Phase 3 tests keypad (DTMF) events, caller ID and recording first.
 
 ### 10.2 Ingest pipeline
 1. Baileys event → filter (tier, mentions, archived, muted) → **store raw immediately** (including my own outgoing messages).
@@ -240,7 +240,7 @@ Voice always works; the keypad is a fallback for noisy rooms and misrecognition.
 ### 10.5 Models
 - **gpt-6-luna** for classification, chat summaries, and image description (if it accepts images; verify).
 - A cheap OpenAI transcription model for voice notes.
-- **gpt-realtime-mini** for calls.
+- **Call model: to be chosen** (gpt-realtime-2.1-mini or gpt-live-1, see PLAN.md §3D). The call adapter is the only engine-specific code.
 - Model names live in config so they can be swapped without code changes.
 
 ### 10.6 Language & code layout
@@ -276,5 +276,5 @@ Voice always works; the keypad is a fallback for noisy rooms and misrecognition.
 - **Retention:** a purge (hourly or nightly) deletes **all messages older than 4 days**, heard or not, along with their transcripts, descriptions, and any chat summary built only from them. Chat/contact metadata and config are kept. My phone remains the full record.
 - **Read status:** never mark anything read on WhatsApp (§3.7).
 - **Logging:** metadata only (chat names, counts, errors, costs), never message text.
-- **Costs:** every API call logs tokens/minutes and estimated cost to a `usage` table; `scripts/costs` (or `/costs`) shows month-to-date. Target ~$10/month. Separately, set a **hard OpenAI project spending limit of ~$20–30/month** as a backstop.
+- **Costs:** every API call logs tokens/minutes and estimated cost to a `usage` table; `scripts/costs` (or `/costs`) shows month-to-date. Target ~$12/month. Separately, set a **hard OpenAI project spending limit of ~$20–30/month** as a backstop.
 - **Backups:** none. If the VPS is lost, re-pair WhatsApp and start fresh.
