@@ -16,6 +16,9 @@ describe('name resolution', () => {
     expect(resolveExact(dir, '050-333-3333')).toMatchObject({ status: 'ok', entry: { jid: DOVID_C } });
     expect(resolveExact(dir, FAMILY)).toMatchObject({ status: 'ok', entry: { jid: FAMILY } });
     expect(resolveExact(dir, 'Dovid').status).toBe('unknown');
+    // Numbers and JIDs apply before that chat has ever been seen.
+    expect(resolveExact(dir, '+1 847-555-0199')).toMatchObject({ status: 'ok', entry: { jid: '18475550199@s.whatsapp.net' } });
+    expect(resolveExact(dir, '120363999@g.us', 'group')).toMatchObject({ status: 'ok', entry: { jid: '120363999@g.us' } });
     expect(resolveExact(dir, 'Family', 'person').status).toBe('unknown');
   });
 
@@ -37,7 +40,8 @@ describe('name resolution', () => {
 
 describe('config', () => {
   it('validates', () => {
-    expect(parseConfig({ pin: 1234 }).pin).toBe('1234');
+    expect(parseConfig({ pin: '0123' }).pin).toBe('0123');
+    expect(() => parseConfig({ pin: 123 })).toThrow(/quoted/);
     expect(() => parseConfig({ pin: '12a' })).toThrow();
     expect(parseConfig(null).models.classify).toBe('gpt-6-luna');
   });

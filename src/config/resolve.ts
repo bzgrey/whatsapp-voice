@@ -53,16 +53,26 @@ export function buildDirectory(store: Store): Entry[] {
 
 const byJid = (dir: Entry[], jid: string) => dir.find((e) => e.jid === jid || e.aliases.includes(jid));
 
-/** A JID or phone number written directly, rather than a name. */
-function literal(dir: Entry[], text: string): Entry | null | undefined {
-  if (text.includes('@')) return byJid(dir, text) ?? null;
-  const digits = text.replace(/[\s()+-]/g, '');
+/**
+ * A JID or phone number written directly, rather than a name. Applies even
+ * before we've seen that chat (e.g. a flagged parent who hasn't messaged yet).
+ */
+function literal(dir: Entry[], text: string, kind?: 'person' | 'group'): Entry | undefined {
+  const unseen = (jid: string): Entry | undefined => {
+    const isGroup = jid.endsWith('@g.us');
+    if (kind && isGroup !== (kind === 'group')) return undefined;
+    return { jid, aliases: [], isGroup, names: [], label: jid, lastActivity: null };
+  };
+  if (text.includes('@')) return byJid(dir, text.trim()) ?? unseen(text.trim());
+  const digits = text.replace(/[\s()+.-]/g, '');
   if (/^\d{7,}$/.test(digits)) {
     const pn = normalizePhone(digits);
-    return dir.find((e) => jidPhone(e.jid) === pn) ?? null;
+    return dir.find((e) => jidPhone(e.jid) === pn) ?? unseen(`${pn}@s.whatsapp.net`);
   }
   return undefined;
 }
+
+const isLiteral = (text: string) => text.includes('@') || /^\+?[\d\s().-]{7,}$/.test(text.trim());
 
 /**
  * Exact resolution for config entries: a JID, a phone number, or a full name
@@ -70,9 +80,10 @@ function literal(dir: Entry[], text: string): Entry | null | undefined {
  */
 export function resolveExact(dir: Entry[], text: string, kind?: 'person' | 'group'): Resolution {
   const pool = kind ? dir.filter((e) => e.isGroup === (kind === 'group')) : dir;
-  const lit = literal(pool, text);
-  if (lit) return { status: 'ok', entry: lit };
-  if (lit === null) return { status: 'unknown' };
+  if (isLiteral(text)) {
+    const lit = literal(pool, text, kind);
+    return lit ? { status: 'ok', entry: lit } : { status: 'unknown' };
+  }
   const q = normalizeName(text);
   const matches = pool.filter((e) => e.names.some((n) => normalizeName(n) === q));
   if (matches.length === 1) return { status: 'ok', entry: matches[0]! };
@@ -109,8 +120,10 @@ function score(names: string[], q: string): number {
  */
 export function resolveSpoken(dir: Entry[], text: string, kind?: 'person' | 'group'): Resolution {
   const pool = kind ? dir.filter((e) => e.isGroup === (kind === 'group')) : dir;
-  const lit = literal(pool, text);
-  if (lit) return { status: 'ok', entry: lit };
+  if (isLiteral(text)) {
+    const lit = literal(pool, text, kind);
+    return lit ? { status: 'ok', entry: lit } : { status: 'unknown' };
+  }
   const q = normalizeName(text.replace(/^(the|my)\s+/i, '').replace(/\s+(group|chat)$/i, ''));
   if (!q) return { status: 'unknown' };
   const scored = pool.map((e) => ({ e, s: score(e.names, q) })).filter((x) => x.s > 0);

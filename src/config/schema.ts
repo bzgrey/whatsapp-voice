@@ -55,6 +55,8 @@ export function parseConfig(raw: unknown): Config {
   if (raw == null) raw = {};
   if (typeof raw !== 'object' || Array.isArray(raw)) throw new ConfigError('config must be a mapping');
   const r = raw as Record<string, unknown>;
+  // An unquoted 0123 is the number 123 in YAML: the leading zero would be lost.
+  if (typeof r.pin === 'number') throw new ConfigError('pin must be quoted, e.g. pin: "0123"');
   const pin = r.pin == null ? '' : String(r.pin);
   if (pin && !/^\d{3,10}$/.test(pin)) throw new ConfigError('pin must be 3–10 digits');
   const models = (r.models ?? {}) as Record<string, unknown>;
