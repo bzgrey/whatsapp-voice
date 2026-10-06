@@ -43,12 +43,23 @@ function sideband(url, callId, isRealtime) {
   ws.on('open', () => {
     log('sideband open', callId);
     if (isRealtime) ws.send(JSON.stringify({ type: 'response.create' }));
+    else say('The call just connected. Greet the caller now.');
   });
+  // Live: speakable context for the model (it may paraphrase).
+  const say = (content) => ws.send(JSON.stringify({ type: 'session.commentary.append', delegation_id: null, content }));
+  // Live: collect transcript fragments and log them as whole lines.
+  const text = { in: '', out: '' };
+  const flush = () => {
+    for (const k of ['in', 'out']) if (text[k].trim()) { log(k === 'in' ? 'HEARD:' : 'SAID: ', text[k].trim()); text[k] = ''; }
+  };
   ws.on('message', (raw) => {
     const ev = JSON.parse(raw);
+    if (ev.type === 'session.input_transcript.delta') { if (text.out) flush(); text.in += ev.delta ?? ''; return; }
+    if (ev.type === 'session.output_transcript.delta') { if (text.in) flush(); text.out += ev.delta ?? ''; return; }
+    if (ev.type === 'session.input_audio.append' || ev.type === 'session.usage.updated') return;
     if (ev.type.includes('dtmf')) {
       log('DTMF', JSON.stringify(ev));
-      if (!isRealtime) return;
+      if (!isRealtime) return say(`The caller pressed key ${ev.event} on the keypad.`);
       const digit = ev.event;
       ws.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `[The caller pressed key ${digit} on the keypad.]` }] } }));
       ws.send(JSON.stringify({ type: 'response.create' }));
@@ -62,7 +73,7 @@ function sideband(url, callId, isRealtime) {
       log('event', ev.type);
     }
   });
-  ws.on('close', () => log('sideband closed', callId, `${((Date.now() - started) / 1000).toFixed(0)}s`));
+  ws.on('close', () => flush() || log('sideband closed', callId, `${((Date.now() - started) / 1000).toFixed(0)}s`));
 }
 
 http.createServer((req, res) => {
