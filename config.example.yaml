@@ -38,10 +38,13 @@ dictation_marker_text: "🎙️"
 # (in case WhatsApp marks it read on my phone). See SPEC open question 9.
 restore_unread_after_send: true
 
+# Voice for the phone call (OpenAI Realtime voice name).
+call_voice: cedar
+
 models:
   classify: gpt-6-luna        # urgent / trivial per message
   summarize: gpt-6-luna       # roll-call one-liners and drill-in summaries
   vision: gpt-6-luna          # image descriptions
   transcribe: gpt-4o-mini-transcribe
-  call: gpt-realtime-2.1-mini # phone-call model (still being chosen)
+  call: gpt-realtime-2.1-mini # phone-call model
   simulate: gpt-6-luna        # text model for scripts/simulate

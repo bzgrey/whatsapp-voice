@@ -181,12 +181,12 @@ All server pieces run in **one Node process** (TypeScript via `tsx`) under PM2, 
   - [x] Verify DTMF events and caller ID (both arrive at OpenAI)
   - [ ] Verify sending a reply doesn't mark the chat read or send receipts
   - [x] Measure realtime cost per minute: ~1.7–2¢/min on the mini models (test calls, short replies)
-  - [ ] Choose the call model: comprehension was weak on gpt-realtime-mini and 2.1-mini; gpt-live-1 untested. Check what the model hears (input transcript) to rule out audio quality
+  - [x] Choose the call model: gpt-realtime-2.1-mini (2026-10-06)
   - [ ] Yemot ad before routing on the free plan: accept, pay ~₪30–50/mo, or another number
   - [ ] Verify call recording on the VPS (voice notes)
-- [ ] **5. Voice agent** (state machine, tools and instructions are in `src/briefing/session.ts` and `src/call/tools.ts`; only the engine adapter is left)
-  - [ ] Webhook + control WebSocket, caller ID / PIN check
-  - [ ] Tools wired to the briefing state machine
+- [ ] **5. Voice agent** (model: gpt-realtime-2.1-mini, chosen 2026-10-06; adapter in `src/call/`, unit-tested, not yet on a real call)
+  - [x] Webhook + control WebSocket, caller ID / PIN check
+  - [x] Tools wired to the briefing state machine
   - [ ] Send gate: full read-back, keypad 1 only; quote-replies; drafts persisted
   - [ ] Voice config commands (flag/unflag/mute/unmute)
   - [ ] Voice notes on request (if feasible)

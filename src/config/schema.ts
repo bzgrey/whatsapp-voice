@@ -16,6 +16,7 @@ export interface Config {
   dictation_marker: boolean;
   dictation_marker_text: string;
   restore_unread_after_send: boolean;
+  call_voice: string;
   models: Models;
 }
 
@@ -37,6 +38,7 @@ export const DEFAULT_CONFIG: Config = {
   dictation_marker: false,
   dictation_marker_text: '🎙️',
   restore_unread_after_send: true,
+  call_voice: 'cedar',
   models: DEFAULT_MODELS,
 };
 
@@ -66,6 +68,7 @@ export function parseConfig(raw: unknown): Config {
     dictation_marker: Boolean(r.dictation_marker ?? false),
     dictation_marker_text: String(r.dictation_marker_text ?? DEFAULT_CONFIG.dictation_marker_text),
     restore_unread_after_send: Boolean(r.restore_unread_after_send ?? true),
+    call_voice: String(r.call_voice ?? DEFAULT_CONFIG.call_voice),
     models: Object.fromEntries(
       Object.entries(DEFAULT_MODELS).map(([k, v]) => [k, models[k] == null ? v : String(models[k])]),
     ) as unknown as Models,

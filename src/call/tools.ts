@@ -1,6 +1,6 @@
 import type { FunctionTool } from '../llm/openai.ts';
 
-/** Engine-neutral tool definitions (Realtime's flat function format). */
+/** Tool definitions in Realtime's flat function format. */
 export interface ToolDef {
   type: 'function';
   name: string;

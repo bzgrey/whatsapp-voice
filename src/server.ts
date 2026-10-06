@@ -11,6 +11,7 @@ import { Tasks } from './llm/tasks.ts';
 import { errMsg, log, silenceLibsignal } from './log.ts';
 import { WhatsApp } from './whatsapp/socket.ts';
 import { getWaStatus } from './whatsapp/status.ts';
+import { callRouter } from './call/webhook.ts';
 import { monthToDate } from './llm/usage.ts';
 
 silenceLibsignal();
@@ -34,13 +35,14 @@ function purge() {
 }
 
 const app = express();
+// The call webhook needs the raw body for its signature, so it goes before express.json().
+app.use(callRouter({ store, config, tasks, sender: wa, now: nowSec }));
 app.use(express.json());
 app.get('/health', (_req, res) => res.json({ ok: true, whatsapp: getWaStatus(store), pendingJobs: store.pendingJobCount() }));
 app.get('/costs', (_req, res) => res.json(monthToDate(store)));
 app.get('/groups', async (_req, res) => {
   try { res.json(await wa.listGroups()); } catch (err) { res.status(503).json({ error: errMsg(err) }); }
 });
-// Phase 3: POST /openai/webhook → src/call/ engine adapter (once the call model is chosen).
 
 purge();
 setInterval(purge, 3600_000);
