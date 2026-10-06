@@ -11,7 +11,7 @@ const CLASSIFY_SYSTEM = `You triage WhatsApp messages for someone at yeshiva who
 Messages may be in Hebrew, English, Yiddish, or a mix.
 Return JSON: {"is_urgent": boolean, "is_trivial": boolean}.
 is_urgent: true ONLY for emergencies or truly time-sensitive matters: illness, injury, accident, hospital, death, someone in danger, someone waiting for him right now, or a request that is useless if not answered within hours. Routine requests, plans for later, simmering questions and chatter are NOT urgent. When unsure, false.
-is_trivial: true for content-free messages: "ok", "thanks", "👍", "lol", a lone emoji, "good night", a sticker, a reaction. A short message with real content ("ok, see you at 8") is NOT trivial.`;
+is_trivial: true for content-free messages: "ok", "thanks", "👍", "lol", a lone emoji, "good night", a sticker, a reaction. A short message with real content ("ok, see you at 8") is NOT trivial. A bare "yes", "no", "כן", "לא", "maybe" or a time is an answer to something, so NOT trivial.`;
 
 export const SUMMARY_LINE_SYSTEM = `You write one-line summaries of a WhatsApp chat for a phone briefing, spoken aloud in English.
 You get the recent conversation; lines marked (new) are the unheard ones. "Me" is the listener.
@@ -31,7 +31,7 @@ Return JSON: {"description": string}.`;
 const NAME_MATCH_SYSTEM = `You match a spoken name to WhatsApp contacts. Names may be in Hebrew, English or Yiddish, so match across scripts and transliterations ("Yossi" = "יוסי", "Moishe" = "משה").
 Return JSON {"ids": number[]}: the ids of every contact the spoken name could plausibly refer to, best first. Empty if none.`;
 
-const TRIVIAL_RE = /^(ok(ay)?|k|kk|thanks?|thank you|thx|ty|lol|haha+|yes|no|np|👍|🙏|❤️|אוקי|אוקיי|בסדר|תודה|תודה רבה|סבבה|כן|לא|חחח+|a dank|dank)[.!\s]*$/iu;
+const TRIVIAL_RE = /^(ok(ay)?|k|kk|thanks?|thank you|thx|ty|lol|haha+|np|👍|🙏|❤️|אוקי|אוקיי|בסדר|תודה|תודה רבה|סבבה|חחח+|a dank|dank)[.!\s]*$/iu;
 const EMOJI_ONLY_RE = /^[\p{Extended_Pictographic}\u{1F3FB}-\u{1F3FF}‍️\s]+$/u;
 
 /** Cheap pre-check so obvious acks never hit the API. */

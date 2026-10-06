@@ -65,6 +65,8 @@ export class CallSession {
   private pinTries = 0;
   private summariesReady: Promise<unknown> = Promise.resolve();
   private activeDraft: DraftRow | null = null;
+  /** Drafts written during this call; only these are replaced by a new draft_message. */
+  private ownDrafts = new Set<number>();
   /** The chat just briefed or read, for "reply to that" and "read it". */
   private lastChat: string | null = null;
   readonly callId: number;
@@ -117,8 +119,8 @@ export class CallSession {
       && t - prev.started_at < RETENTION_SECONDS && store.unheardForChat(prev.current_chat).length) {
       this.steps.push({ kind: 'resume', name: displayName(store, prev.current_chat) });
     }
-    const draft = store.pendingDrafts()[0];
-    if (draft) this.steps.push({ kind: 'draft', draft });
+    // Offer every unsent draft, oldest first (normally zero or one).
+    for (const draft of store.pendingDrafts().slice(0, 3).reverse()) this.steps.push({ kind: 'draft', draft });
     this.steps.push({ kind: 'say', text: countsSentence(counts) }, { kind: 'items' });
   }
 
@@ -143,6 +145,12 @@ export class CallSession {
       const step = this.steps[this.pos++]!;
       if (step.kind === 'say') { out.push(`Say: "${step.text}"`); continue; }
       if (step.kind === 'items') {
+        // Let the greeting be spoken while late summaries finish, rather than opening with silence.
+        if (out.length) {
+          this.pos--;
+          out.push('Then call next_item to begin the briefing.');
+          return out.join('\n');
+        }
         await this.summariesReady;
         const { items } = buildBriefing(gatherUnheard(store), store);
         this.steps.splice(this.pos, 0, ...items.map((item) => ({ kind: 'item' as const, item })));
@@ -304,8 +312,10 @@ export class CallSession {
     if (!entry) return ask!;
     const { store, now } = this.d;
     const quoted = inContext && entry.jid === this.lastChat ? store.lastIncoming(entry.jid) ?? null : null;
-    if (this.activeDraft) store.setDraftStatus(this.activeDraft.id, 'cancelled', now());
+    // A new draft replaces (corrects) one dictated in this call; a draft offered from an earlier call stays saved.
+    if (this.activeDraft && this.ownDrafts.has(this.activeDraft.id)) store.setDraftStatus(this.activeDraft.id, 'cancelled', now());
     this.activeDraft = store.createDraft({ chat_jid: entry.jid, text, quoted_id: quoted?.id ?? null }, now());
+    this.ownDrafts.add(this.activeDraft.id);
     this.lastChat = entry.jid;
     const name = entry.isGroup ? `the ${entry.label} group` : entry.label;
     return [

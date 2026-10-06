@@ -135,6 +135,11 @@ export class Store {
     return this.db.prepare('SELECT * FROM messages WHERE chat_jid = ? AND id = ?').get(chatJid, id) as MessageRow | undefined;
   }
 
+  /** One of my own messages by WhatsApp id (any chat). */
+  findOwnMessage(id: string): MessageRow | undefined {
+    return this.db.prepare('SELECT * FROM messages WHERE id = ? AND from_me = 1').get(id) as MessageRow | undefined;
+  }
+
   updateMessage(rowid: number, fields: Partial<Pick<MessageRow, 'raw_text' | 'transcript' | 'media_desc' | 'media_ref' | 'is_urgent' | 'is_trivial'>>) {
     const keys = Object.keys(fields);
     if (!keys.length) return;
@@ -264,6 +269,17 @@ export class Store {
     }
     if (retryAt === null) this.db.prepare("UPDATE jobs SET status = 'failed', last_error = ? WHERE id = ?").run(error, id);
     else this.db.prepare("UPDATE jobs SET status = 'pending', last_error = ?, run_after = ? WHERE id = ?").run(error, retryAt, id);
+  }
+
+  /** Run again at `runAt` without counting this run as an attempt. */
+  deferJob(id: number, runAt: number) {
+    const job = this.db.prepare('SELECT kind, ref FROM jobs WHERE id = ?').get(id) as { kind: string; ref: string } | undefined;
+    // A newer pending job for the same thing (a debounced summary) already covers it.
+    if (job && this.db.prepare("SELECT 1 FROM jobs WHERE kind = ? AND ref = ? AND status = 'pending'").get(job.kind, job.ref)) {
+      this.finishJob(id);
+      return;
+    }
+    this.db.prepare("UPDATE jobs SET status = 'pending', attempts = MAX(attempts - 1, 0), run_after = ? WHERE id = ?").run(runAt, id);
   }
 
   /** After a crash, jobs left 'running' go back to the queue. */

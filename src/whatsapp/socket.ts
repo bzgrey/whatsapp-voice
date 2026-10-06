@@ -1,6 +1,6 @@
 import makeWASocket, {
   BufferJSON, DisconnectReason, downloadMediaMessage, fetchLatestBaileysVersion, useMultiFileAuthState,
-  type WAMessage, type WASocket,
+  type proto, type WAMessage, type WASocket,
 } from '@whiskeysockets/baileys';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
@@ -33,6 +33,8 @@ export class WhatsApp implements Sender, MediaFetcher {
   private pairingRequested = false;
   private stopped = false;
   me: Me = { pn: null, lid: null };
+  /** Exact content of messages sent from this companion, for retry receipts (kept 1 day). */
+  private sent = new Map<string, { message: proto.IMessage; at: number }>();
 
   constructor(private d: Deps) {}
 
@@ -47,8 +49,8 @@ export class WhatsApp implements Sender, MediaFetcher {
       logger: pino({ level: 'error' }),
       markOnlineOnConnect: false,
       syncFullHistory: false,
-      // Baileys asks for message content when retrying decryption; we keep only what we store.
-      getMessage: async () => undefined,
+      // When a recipient can't decrypt something we sent, Baileys re-encrypts it from here.
+      getMessage: async (key) => this.lookupSent(key.id),
     });
     this.sock = sock;
     sock.ev.on('creds.update', saveCreds);
@@ -187,11 +189,27 @@ export class WhatsApp implements Sender, MediaFetcher {
       message: { conversation: quoted.raw_text ?? quoted.transcript ?? '' },
     } : undefined;
     const sent = await sock.sendMessage(jid, { text }, quotedMsg ? { quoted: quotedMsg } : undefined);
+    if (sent?.key.id && sent.message) this.rememberSent(sent.key.id, sent.message);
     // If WhatsApp marks the chat read on my phone when the companion sends, put it back (SPEC open question 9).
     if (this.d.config.config.restore_unread_after_send && unreadBefore > 0 && sent) {
       await sock.chatModify({ markRead: false, lastMessages: [{ key: sent.key, messageTimestamp: sent.messageTimestamp }] }, jid)
         .catch((err) => log.warn(`restore unread failed: ${errMsg(err)}`));
     }
+  }
+
+  private rememberSent(id: string, message: proto.IMessage) {
+    const now = this.d.now();
+    for (const [k, v] of this.sent) if (now - v.at > 86400) this.sent.delete(k);
+    this.sent.set(id, { message, at: now });
+  }
+
+  private async lookupSent(id: string | null | undefined): Promise<proto.IMessage | undefined> {
+    if (!id) return undefined;
+    const hit = this.sent.get(id);
+    if (hit) return hit.message;
+    // Sent from my phone or before a restart: the stored text is the best we have.
+    const row = this.d.store.findOwnMessage(id);
+    return row?.raw_text ? { conversation: row.raw_text } : undefined;
   }
 
   // ---------- MediaFetcher ----------

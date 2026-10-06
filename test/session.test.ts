@@ -53,7 +53,8 @@ describe('briefing flow', () => {
     const s = call();
     const open = (await s.opening()).output;
     expect(open).toContain('You have 1 flagged chat and 1 other.');
-    expect(open).toContain('call me');
+    expect(open).not.toContain('call me'); // greeting first, items on the next call
+    expect((await s.tool('next_item', {})).output).toContain('call me');
     expect(store.unheard()).toHaveLength(2);
     const next = (await s.tool('next_item', {})).output;
     expect(next).toContain('Roll call');
@@ -69,6 +70,7 @@ describe('briefing flow', () => {
     addMessage(store, YOSSI, { raw_text: 'sefer?' });
     const s1 = call();
     await s1.opening();
+    await s1.tool('next_item', {}); // Mom
     s1.confirmSpoken(); // Mom was read
     await s1.tool('next_item', {}); // Yossi handed out, then the line drops
     s1.end();
@@ -76,6 +78,7 @@ describe('briefing flow', () => {
     const s2 = call();
     const open = (await s2.opening()).output;
     expect(open).toMatch(/Your last call dropped during Yossi Cohen\. Resume\?/);
+    expect((await s2.tool('next_item', {})).output).toContain('You have 1 chat with new messages.');
     const next = (await s2.tool('next_item', {})).output;
     expect(next).toContain('Yossi');
     expect(next).not.toContain('call me');
@@ -108,7 +111,8 @@ describe('sending', () => {
     const { store, call, sender } = setup();
     addMessage(store, YOSSI, { id: 'Q', raw_text: 'sefer?' });
     const s = call();
-    await s.opening(); // Yossi's roll call is the current chat
+    await s.opening();
+    await s.tool('next_item', {}); // Yossi's roll call is the current chat
     const draft = (await s.tool('draft_message', { text: 'Sure, take it', reply_in_context: true })).output;
     expect(draft).toContain(`"To Yossi Cohen: 'Sure, take it'. Press 1 to send."`);
     expect(draft).toMatch(/reply to their last message/);
@@ -139,6 +143,21 @@ describe('sending', () => {
     expect((await s2.dtmf('9'))!.output).toMatch(/Cancelled/);
     expect(store.pendingDrafts()).toHaveLength(0);
     expect(sender.sent).toHaveLength(0);
+  });
+
+  it('a new draft does not discard a draft kept from an earlier call', async () => {
+    const { store, call } = setup();
+    const s1 = call();
+    await s1.opening();
+    await s1.tool('draft_message', { to: 'Mom', text: 'home Thursday' });
+    await s1.tool('draft_message', { to: 'Mom', text: 'home Friday' }); // a correction replaces it
+    s1.end();
+    expect(store.pendingDrafts().map((d) => d.text)).toEqual(['home Friday']);
+    const s2 = call();
+    expect((await s2.opening()).output).toContain('home Friday');
+    await s2.tool('next_item', {}); // "carry on"
+    await s2.tool('draft_message', { to: 'Yossi', text: 'yes take it' });
+    expect(store.pendingDrafts().map((d) => d.text).sort()).toEqual(['home Friday', 'yes take it']);
   });
 
   it('keeps the draft if sending fails', async () => {

@@ -51,9 +51,10 @@ describe('ingest', () => {
     const { store, feed } = setup();
     feed({ key: { remoteJid: MOM, fromMe: true }, message: { conversation: 'coming thursday' } });
     feed({ key: { remoteJid: MOM }, message: { conversation: '👍' } });
+    feed({ key: { remoteJid: MOM }, message: { conversation: 'no' } }); // an answer, not trivia
     const rows = store.db.prepare('SELECT from_me, is_trivial FROM messages ORDER BY rowid').all();
-    expect(rows).toEqual([{ from_me: 1, is_trivial: 0 }, { from_me: 0, is_trivial: 1 }]);
-    expect((store.db.prepare("SELECT COUNT(*) n FROM jobs WHERE kind = 'classify'").get() as { n: number }).n).toBe(0);
+    expect(rows).toEqual([{ from_me: 1, is_trivial: 0 }, { from_me: 0, is_trivial: 1 }, { from_me: 0, is_trivial: null }]);
+    expect((store.db.prepare("SELECT COUNT(*) n FROM jobs WHERE kind = 'classify'").get() as { n: number }).n).toBe(1);
   });
 
   it('applies deletes and edits', () => {
@@ -101,6 +102,25 @@ describe('jobs', () => {
     }
     expect(calls).toBe(MAX_ATTEMPTS);
     expect(store.db.prepare('SELECT status FROM jobs').get()).toEqual({ status: 'failed' });
+  });
+
+  it('does not count deferrals as attempts', async () => {
+    const store = makeStore();
+    let t = NOW;
+    store.enqueue('summarize', 'x', t, t);
+    let calls = 0;
+    const worker = new JobWorker(store, async () => (++calls <= 10 ? { deferSeconds: 30 } : Promise.reject(new Error('timeout'))), () => t);
+    for (let i = 0; i < 11; i++) { await worker.tick(); worker.stop(); t += 60; }
+    expect(store.db.prepare('SELECT status, attempts FROM jobs').get()).toEqual({ status: 'pending', attempts: 1 });
+  });
+
+  it('a deferred job yields to a newer pending one', async () => {
+    const store = makeStore();
+    store.enqueue('summarize', 'x', NOW, NOW);
+    const worker = new JobWorker(store, async () => { store.enqueue('summarize', 'x', NOW + 90, NOW, true); return { deferSeconds: 30 }; }, () => NOW);
+    await worker.tick();
+    worker.stop();
+    expect(store.db.prepare('SELECT status FROM jobs ORDER BY id').all()).toEqual([{ status: 'done' }, { status: 'pending' }]);
   });
 
   it('defers without failing', async () => {

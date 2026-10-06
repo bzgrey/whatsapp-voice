@@ -53,7 +53,7 @@ export class JobWorker {
     try {
       const result = await this.handler(job);
       if (result === 'done') this.store.finishJob(job.id);
-      else this.store.failJob(job.id, 'deferred', this.now() + result.deferSeconds);
+      else this.store.deferJob(job.id, this.now() + result.deferSeconds);
     } catch (err) {
       const giveUp = job.attempts >= MAX_ATTEMPTS;
       this.store.failJob(job.id, errMsg(err).slice(0, 500), giveUp ? null : this.now() + backoffSeconds(job.attempts));
