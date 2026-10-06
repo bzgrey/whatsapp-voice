@@ -99,10 +99,13 @@ export class RealtimeCall {
     this.logUsage(r.usage);
     const completed = r.status === 'completed';
     const calls = completed ? (r.output ?? []).filter((o) => o.type === 'function_call') : [];
-    const spoke = (r.output ?? []).some((o) => o.type === 'message');
+    const messages = (r.output ?? []).filter((o) => o.type === 'message');
+    const spoke = messages.length > 0;
+    const transcripts = messages.flatMap((o) => o.content ?? []).map((c) => c.transcript).filter((t): t is string => typeof t === 'string');
 
-    // Spoken to the end (not cut off by the caller): what was handed out is now heard.
-    if (completed && spoke) this.session.confirmSpoken();
+    // Spoken to the end (not cut off by the caller): tell the session what was said,
+    // so it counts as heard only once enough of the handed-out part was really spoken.
+    if (completed && spoke) this.session.confirmSpoken(transcripts.length ? transcripts.join(' ') : undefined);
 
     if (completed && spoke && this.hangupPending && !calls.length) {
       const words = (r.output ?? []).flatMap((o) => o.content ?? []).map((c) => wordCount(c.transcript ?? '')).reduce((a, b) => a + b, 0);

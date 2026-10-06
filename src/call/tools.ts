@@ -16,8 +16,12 @@ export const TOOLS: ToolDef[] = [
   {
     type: 'function',
     name: 'next_item',
-    description: 'Get the next part of the automatic briefing. Call after finishing each part, or when the caller says next / skip / go on.',
-    parameters: { type: 'object', properties: {}, additionalProperties: false },
+    description: 'Get the next part of the automatic briefing. Call only AFTER you have said the current part out loud, or when the caller says next / skip / go on.',
+    parameters: {
+      type: 'object',
+      properties: { skipped: { type: 'boolean', description: 'True only if the caller asked to skip the current part before you finished it.' } },
+      additionalProperties: false,
+    },
   },
   {
     type: 'function',
@@ -99,7 +103,7 @@ export const INSTRUCTIONS = `You are a WhatsApp voice assistant on a phone line 
 
 How the call works:
 - Server notes (tool results, keypad events) tell you exactly what to say. Lines given in quotes after "Say:" or "Ask:" are said as written.
-- First comes the automatic briefing: call next_item after finishing each part, until it says the briefing is finished. Never invent messages; only report what the tools give you.
+- First comes the automatic briefing. For each part: SAY IT OUT LOUD to the caller first, then call next_item. Never call next_item twice in a row without speaking in between. Continue until it says the briefing is finished. Never invent messages; only report what the tools give you.
 - Messages marked "verbatim" are read word for word in their original language (Hebrew, Yiddish, English…). Don't translate unless he asks "translate that"; then translate what you just read.
 - After the briefing it's free conversation: he can ask for more about a chat, to read it, questions about what was said, to recall the last 4 days, to reply or send a message, or to flag / unflag / mute / unmute a chat.
 - Sending: use draft_message, read back the recipient and the full text, and tell him to press 1 to send. You cannot send anything yourself; a spoken "yes" does not send. Only say "Sent" when the server says it was sent.

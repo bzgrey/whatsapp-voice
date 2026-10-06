@@ -10,9 +10,9 @@ import { buildDirectory, resolveSpokenWithFallback, type Entry } from '../config
 import { chatContext, refreshSummaryLine, senderNamer } from '../ingest/summaries.ts';
 import { getWaStatus } from '../whatsapp/status.ts';
 import {
-  buildBriefing, countsSentence, gatherUnheard, itemChat, itemChatName, itemMessageIds, itemPrompt, type Item,
+  buildBriefing, countsSentence, gatherUnheard, itemChat, itemMessageIds, itemPrompt, itemSpeakable, type Item,
 } from './build.ts';
-import { messageContent, renderMessages, sincePhrase } from './render.ts';
+import { messageContent, renderMessages, sincePhrase, wordCount } from './render.ts';
 
 /** Sends WhatsApp messages. Only the keypad-1 path in CallSession calls it. */
 export interface Sender {
@@ -64,6 +64,13 @@ export class CallSession {
   private pinDigits = '';
   private pinTries = 0;
   private summariesReady: Promise<unknown> = Promise.resolve();
+  private summariesSettled = true;
+  /**
+   * The last thing handed out that the model must say out loud before the
+   * briefing moves on, and how many of its words have been spoken so far.
+   */
+  private pending: { prompt: string; words: number } | null = null;
+  private spokenWords = 0;
   private activeDraft: DraftRow | null = null;
   /** Drafts written during this call; only these are replaced by a new draft_message. */
   private ownDrafts = new Set<number>();
@@ -105,7 +112,11 @@ export class CallSession {
     const tasks = this.d.tasks;
     if (tasks?.llm.available) {
       const stale = groups.filter((g) => !g.summaryFresh && g.messages.some((m) => !m.is_trivial));
-      this.summariesReady = Promise.allSettled(stale.map((g) => refreshSummaryLine(store, tasks, g.jid, t, SUMMARY_TIMEOUT_MS)));
+      if (stale.length) {
+        this.summariesSettled = false;
+        this.summariesReady = Promise.allSettled(stale.map((g) => refreshSummaryLine(store, tasks, g.jid, t, SUMMARY_TIMEOUT_MS)))
+          .then(() => { this.summariesSettled = true; });
+      }
     }
 
     const wa = getWaStatus(store);
@@ -124,11 +135,29 @@ export class CallSession {
     this.steps.push({ kind: 'say', text: countsSentence(counts) }, { kind: 'items' });
   }
 
-  /** Mark what was handed out as heard: the model has spoken it. Adapters call this when a response finishes. */
-  confirmSpoken() {
+  /**
+   * The model finished a spoken response. Pass what it said (the transcript):
+   * once enough of the pending part has been said, it counts as heard. With no
+   * text (or force), confirms unconditionally.
+   */
+  confirmSpoken(said?: string) {
+    if (said !== undefined && this.pending) {
+      this.spokenWords += wordCount(said);
+      // At least 40% of the expected words (capped): a bare "okay" doesn't count.
+      const needed = Math.max(2, Math.min(Math.ceil(this.pending.words * 0.4), 25));
+      if (this.spokenWords < needed) return;
+    }
+    this.pending = null;
+    this.spokenWords = 0;
     if (!this.handed.length) return;
     this.d.store.markHeard(this.handed, this.d.now());
     this.handed = [];
+  }
+
+  /** Remember what must be said out loud before moving on. */
+  private expect(prompt: string, speakable: string) {
+    this.pending = { prompt, words: wordCount(speakable) };
+    this.spokenWords = 0;
   }
 
   private hand(ids: number[], chat: string | null) {
@@ -136,20 +165,38 @@ export class CallSession {
     if (chat) this.lastChat = chat;
   }
 
-  /** Hand out the next chunk: any statements, then one item or question. */
-  private async advance(): Promise<string> {
+  /**
+   * Hand out the next chunk: any statements, then one item or question.
+   * Refuses (repeating the pending part) if the model hasn't said the last one
+   * out loud yet, unless the caller asked to skip.
+   */
+  private async advance(skip = false): Promise<string> {
+    if (this.pending && !skip) {
+      return `Not yet: you haven't said the previous part out loud. Say it to the caller now, then call next_item (or call next_item with skipped: true if they asked to skip it):\n${this.pending.prompt}`;
+    }
     this.confirmSpoken();
+    const out = await this.nextChunk();
+    return out;
+  }
+
+  private async nextChunk(): Promise<string> {
     const { store } = this.d;
     const out: string[] = [];
+    const said: string[] = [];
+    const done = (speakable: string) => {
+      const prompt = out.join('\n');
+      this.expect(prompt, [...said, speakable].join(' '));
+      return prompt;
+    };
     while (this.pos < this.steps.length) {
       const step = this.steps[this.pos++]!;
-      if (step.kind === 'say') { out.push(`Say: "${step.text}"`); continue; }
+      if (step.kind === 'say') { out.push(`Say: "${step.text}"`); said.push(step.text); continue; }
       if (step.kind === 'items') {
-        // Let the greeting be spoken while late summaries finish, rather than opening with silence.
-        if (out.length) {
+        // If one-liners are still being written, let the greeting be spoken meanwhile rather than open with silence.
+        if (out.length && !this.summariesSettled) {
           this.pos--;
-          out.push('Then call next_item to begin the briefing.');
-          return out.join('\n');
+          out.push('Say that out loud now. Then call next_item to begin the briefing.');
+          return done('');
         }
         await this.summariesReady;
         const { items } = buildBriefing(gatherUnheard(store), store);
@@ -157,14 +204,16 @@ export class CallSession {
         continue;
       }
       if (step.kind === 'resume') {
-        out.push(`Ask: "Your last call dropped during ${step.name}. Resume?" If yes, call next_item. If no, call skip_briefing and ask what they'd like to do.`);
-        return out.join('\n');
+        const q = `Your last call dropped during ${step.name}. Resume?`;
+        out.push(`Ask: "${q}" If yes, call next_item. If no, call skip_briefing and ask what they'd like to do.`);
+        return done(q);
       }
       if (step.kind === 'draft') {
         if (store.getDraft(step.draft.id)?.status !== 'pending') continue;
         this.activeDraft = step.draft;
-        out.push(`Say: "You had an unsent message to ${displayName(store, step.draft.chat_jid)}: '${step.draft.text}'. Press 1 to send, or 9 to discard." Wait for the keypad. If they'd rather carry on, call next_item; the draft stays saved.`);
-        return out.join('\n');
+        const line = `You had an unsent message to ${displayName(store, step.draft.chat_jid)}: '${step.draft.text}'. Press 1 to send, or 9 to discard.`;
+        out.push(`Say: "${line}" Wait for the keypad. If they'd rather carry on, call next_item; the draft stays saved.`);
+        return done(line);
       }
       const item = this.stillRelevant(step.item);
       if (!item) continue;
@@ -172,16 +221,21 @@ export class CallSession {
       store.updateCall(this.callId, { current_chat: item.kind === 'rollcall' ? item.entries[0]!.jid : item.jid, in_briefing: true });
       out.push(itemPrompt(item));
       out.push(item.kind === 'flagged' && item.mode === 'ask' ? 'After reading or summarizing it, call next_item.' : NEXT);
-      return out.join('\n');
+      return done(itemSpeakable(item));
     }
     if (!this.briefingDone) {
       this.briefingDone = true;
       store.updateCall(this.callId, { current_chat: null, in_briefing: false });
       out.push('Briefing finished. Say "That\'s everything new." and ask if they want anything else: more about a chat, a reply, or something from the last few days.');
+      said.push("That's everything new.");
     } else {
       out.push('The briefing is already finished. Ask what they would like to do.');
     }
-    return out.join('\n');
+    const prompt = out.join('\n');
+    // Only statements (e.g. the greeting) still need saying before anything else is handed out.
+    if (said.length) this.expect(prompt, said.join(' '));
+    else this.pending = null;
+    return prompt;
   }
 
   /** Drop parts of an item already heard (e.g. read on request earlier in the call). */
@@ -201,7 +255,7 @@ export class CallSession {
     if (this.state === 'ended') return { output: 'The call has ended.' };
     try {
       switch (name) {
-        case 'next_item': return { output: await this.advance() };
+        case 'next_item': return { output: await this.advance(!!args.skipped) };
         case 'skip_briefing': return { output: this.skipBriefing() };
         case 'read_chat': return { output: await this.readChat(args.chat) };
         case 'summarize_chat': return { output: await this.summarizeChat(args.chat) };
@@ -269,6 +323,7 @@ export class CallSession {
     }
     const r = renderMessages(unheard, entry.isGroup ? senderNamer(store) : null);
     this.hand(unheard.map((m) => m.rowid), entry.jid);
+    this.expect(`Read ${entry.label}'s messages to the caller.`, r.lines.join(' '));
     return `${entry.label}, ${r.count} new message${r.count === 1 ? '' : 's'}. Read them verbatim, in their original language, without translating:\n${r.lines.map((l) => `  ${l}`).join('\n')}${r.trivial ? `\nThen mention: plus ${r.trivial}.` : ''}`;
   }
 
@@ -283,6 +338,7 @@ export class CallSession {
     if (!tasks?.llm.available) return `Summarize this conversation with ${entry.label} for the caller in a few spoken sentences, focusing on lines marked (new):\n${lines.join('\n')}`;
     const summary = await tasks.summaryDetail(entry.label, entry.isGroup, lines);
     this.hand(unheard.map((m) => m.rowid), entry.jid);
+    this.expect(`Give the caller this summary of ${entry.label}: ${summary}`, summary);
     return `Summary of ${entry.label}. Say this naturally:\n${summary}`;
   }
 
@@ -349,7 +405,7 @@ export class CallSession {
       case '1': return { output: await this.send() };
       case '2':
         if (this.briefingDone) return { output: 'The caller pressed 2 (next), but the briefing is finished. Say so briefly.' };
-        return { output: `The caller pressed 2: skip to the next chat. Stop the current one.\n${await this.advance()}` };
+        return { output: `The caller pressed 2: skip to the next chat. Stop the current one.\n${await this.advance(true)}` };
       case '3': return { output: 'The caller pressed 3: repeat the last thing you said, word for word.' };
       case '9':
         return { output: this.activeDraft ? this.cancelDraft() : 'The caller pressed 9 (cancel), but nothing is pending. Ignore it unless they ask.' };

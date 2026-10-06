@@ -37,14 +37,17 @@ describe('realtime adapter', () => {
     expect(t.notes()[0]).toMatch(/You have 1 flagged chat/);
     expect(t.sent.at(-1)).toEqual({ type: 'response.create' });
 
+    expect(t.notes()[0]).toContain('call me');
+
+    // The first-call bug: the model chains next_item without speaking. Nothing is marked heard.
     await t.call.onEvent({ type: 'response.created' });
-    await t.done([t.said('You have one flagged chat.'), t.fn('next_item')]);
-    expect(t.outputs()[0]).toContain('call me');
+    await t.done([t.fn('next_item')]);
+    expect(t.outputs()[0]).toMatch(/^Not yet/);
     expect(t.store.unheard()).toHaveLength(1);
 
-    await t.done([t.said('Mom says: call me')], 'cancelled'); // caller talked over it
+    await t.done([t.said('You have one flagged chat. Mom says: call me')], 'cancelled'); // caller talked over it
     expect(t.store.unheard()).toHaveLength(1);
-    await t.done([t.said('Mom says: call me')]);
+    await t.done([t.said('You have one flagged chat. Mom says: call me')]);
     expect(t.store.unheard()).toHaveLength(0);
     expect(t.store.usageSince(0)[0]).toMatchObject({ purpose: 'call', calls: 3, cost_usd: expect.any(Number) });
   });

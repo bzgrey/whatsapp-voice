@@ -73,7 +73,10 @@ async function runModel() {
   for (let i = 0; i < 8; i++) {
     const msg = await llm.chat('simulate', config.config.models.simulate, messages, { tools });
     messages.push({ role: 'assistant', content: msg.content, tool_calls: msg.tool_calls });
-    if (msg.content) console.log(`\n${bold('ASSISTANT:')} ${msg.content}\n`);
+    if (msg.content) {
+      console.log(`\n${bold('ASSISTANT:')} ${msg.content}\n`);
+      session.confirmSpoken(msg.content);
+    }
     if (!msg.tool_calls?.length) break;
     for (const tc of msg.tool_calls) {
       const a = JSON.parse(tc.function.arguments || '{}');
@@ -84,7 +87,6 @@ async function runModel() {
       messages.push({ role: 'tool', tool_call_id: tc.id, content: out.output });
     }
   }
-  session.confirmSpoken();
 }
 
 function show(output: string) {

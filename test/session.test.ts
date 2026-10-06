@@ -46,22 +46,42 @@ describe('auth', () => {
 });
 
 describe('briefing flow', () => {
-  it('marks items heard only once the next one is requested or speech is confirmed', async () => {
+  it('opens with the greeting and first item, and marks it heard only once it was said', async () => {
     const { store, call } = setup();
-    addMessage(store, MOM, { raw_text: 'call me' });
+    addMessage(store, MOM, { raw_text: 'call me when you get a chance today' });
     addMessage(store, YOSSI, { raw_text: 'sefer?' });
     const s = call();
     const open = (await s.opening()).output;
     expect(open).toContain('You have 1 flagged chat and 1 other.');
-    expect(open).not.toContain('call me'); // greeting first, items on the next call
-    expect((await s.tool('next_item', {})).output).toContain('call me');
+    expect(open).toContain('call me when you get a chance today');
+    s.confirmSpoken('Okay.'); // too little to count
     expect(store.unheard()).toHaveLength(2);
-    const next = (await s.tool('next_item', {})).output;
-    expect(next).toContain('Roll call');
+    s.confirmSpoken('You have one flagged chat and one other. Mom says: call me when you get a chance today.');
     expect(store.unheard().map((m) => m.chat_jid)).toEqual([YOSSI]);
-    s.confirmSpoken();
+    expect((await s.tool('next_item', {})).output).toContain('Roll call');
+    s.confirmSpoken('Yossi Cohen, one message: sefer?');
     expect(store.unheard()).toHaveLength(0);
     expect((await s.tool('next_item', {})).output).toMatch(/Briefing finished/);
+  });
+
+  it('refuses to move on when the model asks for the next part without speaking (the first-call bug)', async () => {
+    const { store, call } = setup();
+    addMessage(store, MOM, { raw_text: 'a photo of the sukkah' });
+    addMessage(store, YOSSI, { raw_text: 'sefer?' });
+    const s = call();
+    await s.opening();
+    for (let i = 0; i < 3; i++) {
+      const r = (await s.tool('next_item', {})).output;
+      expect(r).toMatch(/^Not yet: you haven't said the previous part out loud/);
+      expect(r).toContain('a photo of the sukkah');
+    }
+    expect(store.unheard()).toHaveLength(2);
+    // The caller says "skip": that's allowed, and counts as heard (it was mentioned).
+    expect((await s.tool('next_item', { skipped: true })).output).toContain('Roll call');
+    expect(store.unheard().map((m) => m.chat_jid)).toEqual([YOSSI]);
+    // Keypad 2 also moves on.
+    expect((await s.dtmf('2'))!.output).toMatch(/Briefing finished/);
+    expect(store.unheard()).toHaveLength(0);
   });
 
   it('offers to resume after a drop, and skips what was heard', async () => {
@@ -69,17 +89,17 @@ describe('briefing flow', () => {
     addMessage(store, MOM, { raw_text: 'call me' });
     addMessage(store, YOSSI, { raw_text: 'sefer?' });
     const s1 = call();
-    await s1.opening();
-    await s1.tool('next_item', {}); // Mom
+    await s1.opening(); // greeting + Mom
     s1.confirmSpoken(); // Mom was read
-    await s1.tool('next_item', {}); // Yossi handed out, then the line drops
+    await s1.tool('next_item', {}); // Yossi handed out, then the line drops before it's said
     s1.end();
     tick(60);
     const s2 = call();
     const open = (await s2.opening()).output;
     expect(open).toMatch(/Your last call dropped during Yossi Cohen\. Resume\?/);
-    expect((await s2.tool('next_item', {})).output).toContain('You have 1 chat with new messages.');
+    s2.confirmSpoken();
     const next = (await s2.tool('next_item', {})).output;
+    expect(next).toContain('You have 1 chat with new messages.');
     expect(next).toContain('Yossi');
     expect(next).not.toContain('call me');
   });

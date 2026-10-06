@@ -189,6 +189,13 @@ export function itemPrompt(item: Item): string {
   }
 }
 
+/** The words the model is expected to say out loud for an item. */
+export function itemSpeakable(item: Item): string {
+  if (item.kind === 'rollcall') return item.entries.map((e) => `${e.name}, ${e.line}`).join(' ');
+  if (item.kind === 'flagged' && item.mode === 'ask') return `${item.name} has ${item.count} messages. Read them all or summarize?`;
+  return [item.name, ...item.lines].join(' ');
+}
+
 export const itemChat = (item: Item) => (item.kind === 'rollcall' ? item.entries.at(-1)!.jid : item.jid);
 export const itemMessageIds = (item: Item) => (item.kind === 'rollcall' ? item.entries.flatMap((e) => e.messageIds) : item.messageIds);
 export const itemChatName = (item: Item) => (item.kind === 'rollcall' ? item.entries[0]!.name : item.name);
