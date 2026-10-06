@@ -93,6 +93,18 @@ describe('config', () => {
 });
 
 describe('contacts', () => {
+  it('applies names from config, which win over WhatsApp names and survive syncs', () => {
+    const store = makeStore();
+    seedPeople(store);
+    const sync = makeConfig(store, `names:\n  "+1 847-555-0100": Ima\nflagged:\n  - Ima\n`);
+    expect(store.findContact('18475550100@s.whatsapp.net')!.alias).toBe('Ima');
+    store.upsertContact({ jid: '18475550100@s.whatsapp.net', name: 'Rivka Stein', push_name: 'Rivka' });
+    expect(buildDirectory(store).find((e) => e.jid === '18475550100@s.whatsapp.net')!.label).toBe('Ima');
+    store.upsertChat({ jid: '18475550100@s.whatsapp.net' }, NOW);
+    sync.refresh();
+    expect(store.getChat('18475550100@s.whatsapp.net')!.tier).toBe('flagged');
+  });
+
   it('ignores masked-number placeholders as names', async () => {
     const { displayName } = await import('../src/config/names.ts');
     const store = makeStore();
@@ -105,7 +117,7 @@ describe('contacts', () => {
     const store = makeStore();
     store.upsertContact({ jid: YOSSI, lid: '77@lid', name: 'Yossi Cohen' });
     store.upsertContact({ jid: '77@lid', lid: '77@lid', push_name: 'Yossi C' });
-    expect(store.allContacts()).toEqual([{ jid: YOSSI, lid: '77@lid', name: 'Yossi Cohen', push_name: 'Yossi C' }]);
+    expect(store.allContacts()).toEqual([{ jid: YOSSI, lid: '77@lid', name: 'Yossi Cohen', push_name: 'Yossi C', alias: null }]);
     store.upsertContact({ jid: '88@lid', name: 'Only LID' });
     store.upsertContact({ jid: DOVID_C, lid: '88@lid' });
     expect(store.findContact('88@lid')).toMatchObject({ jid: DOVID_C, name: 'Only LID' });

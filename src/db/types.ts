@@ -21,6 +21,8 @@ export interface ContactRow {
   lid: string | null;
   name: string | null;
   push_name: string | null;
+  /** From config.yaml `names:`. */
+  alias: string | null;
 }
 
 export interface MessageRow {

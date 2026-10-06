@@ -25,7 +25,7 @@ export function buildDirectory(store: Store): Entry[] {
   const out = new Map<string, Entry>();
   const activity = store.lastActivityAll();
   for (const c of store.allContacts()) {
-    const names = [c.name, c.push_name].filter(isRealName);
+    const names = [c.alias, c.name, c.push_name].filter(isRealName);
     out.set(c.jid, {
       jid: c.jid,
       aliases: c.lid && c.lid !== c.jid ? [c.lid] : [],

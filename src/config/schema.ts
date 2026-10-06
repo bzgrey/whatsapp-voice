@@ -17,6 +17,8 @@ export interface Config {
   dictation_marker_text: string;
   restore_unread_after_send: boolean;
   call_voice: string;
+  /** What to call people, keyed by number, JID or name: { "+1 847-555-0100": "Mom" }. */
+  names: Record<string, string>;
   models: Models;
 }
 
@@ -39,6 +41,7 @@ export const DEFAULT_CONFIG: Config = {
   dictation_marker_text: '🎙️',
   restore_unread_after_send: true,
   call_voice: 'cedar',
+  names: {},
   models: DEFAULT_MODELS,
 };
 
@@ -49,6 +52,12 @@ const strList = (v: unknown, key: string): string[] => {
   if (!Array.isArray(v)) throw new ConfigError(`${key} must be a list`);
   return v.map((x) => String(x).trim()).filter(Boolean);
 };
+
+function parseNames(v: unknown): Record<string, string> {
+  if (v == null) return {};
+  if (typeof v !== 'object' || Array.isArray(v)) throw new ConfigError('names must be a mapping, e.g. "+1 847-555-0100": Mom');
+  return Object.fromEntries(Object.entries(v).map(([k, n]) => [k.trim(), String(n).trim()]).filter(([k, n]) => k && n));
+}
 
 /** Validate a parsed YAML object, filling defaults. */
 export function parseConfig(raw: unknown): Config {
@@ -71,6 +80,7 @@ export function parseConfig(raw: unknown): Config {
     dictation_marker_text: String(r.dictation_marker_text ?? DEFAULT_CONFIG.dictation_marker_text),
     restore_unread_after_send: Boolean(r.restore_unread_after_send ?? true),
     call_voice: String(r.call_voice ?? DEFAULT_CONFIG.call_voice),
+    names: parseNames(r.names),
     models: Object.fromEntries(
       Object.entries(DEFAULT_MODELS).map(([k, v]) => [k, models[k] == null ? v : String(models[k])]),
     ) as unknown as Models,

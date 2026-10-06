@@ -22,5 +22,5 @@ export function normalizeName(s: string): string {
 export function displayName(store: Store, jid: string, fallbackPushName?: string | null): string {
   if (jid.endsWith('@g.us')) return store.getChat(jid)?.name ?? 'an unnamed group';
   const c = store.findContact(jid);
-  return (isRealName(c?.name) ? c.name : null) || (isRealName(c?.push_name) ? c.push_name : null) || fallbackPushName || (jidPhone(jid) ? speakableNumber(jid) : 'someone');
+  return c?.alias || (isRealName(c?.name) ? c.name : null) || (isRealName(c?.push_name) ? c.push_name : null) || fallbackPushName || (jidPhone(jid) ? speakableNumber(jid) : 'someone');
 }

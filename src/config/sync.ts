@@ -72,8 +72,16 @@ export class ConfigSync {
 
   /** Resolve every configured name and recompute every chat's tier. */
   refresh() {
-    const dir = buildDirectory(this.store);
     const warnings: string[] = [];
+    const aliases = new Map<string, string>();
+    const before = buildDirectory(this.store);
+    for (const [who, name] of Object.entries(this.config.names)) {
+      const r = resolveExact(before, who, 'person');
+      if (r.status === 'ok') aliases.set(r.entry.jid, name);
+      else warnings.push(`names: "${who}" ${r.status === 'ambiguous' ? 'is ambiguous; use a number' : 'not found (yet)'}`);
+    }
+    this.store.setAliases(aliases);
+    const dir = buildDirectory(this.store);
     const resolveList = (list: string[], key: string, kind?: 'person' | 'group') => {
       const set = new Set<string>();
       for (const name of list) {

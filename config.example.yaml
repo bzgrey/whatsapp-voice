@@ -20,6 +20,11 @@ flagged:
   - Mom
   - Yossi Cohen
 
+# What to call people on the phone, by number, JID or name. Wins over
+# the names WhatsApp sends (useful when a saved name doesn't sync).
+names:
+  "+1 847-555-0100": Mom
+
 # Never ingested or mentioned. Archived chats are muted automatically.
 muted:
   - Building committee

@@ -50,6 +50,7 @@ export class Store {
 
   upsertContact(c: { jid: string; lid?: string | null; name?: string | null; push_name?: string | null }) {
     const tx = this.db.transaction(() => {
+      let alias: string | null = null;
       // An update addressed by LID belongs to the phone-JID row that already has that LID.
       if (c.jid.endsWith('@lid')) {
         const owner = this.db.prepare('SELECT jid FROM contacts WHERE lid = ?').get(c.jid) as { jid: string } | undefined;
@@ -61,18 +62,29 @@ export class Store {
         if (byLid) {
           this.db.prepare('DELETE FROM contacts WHERE jid = ?').run(c.lid);
           c = { ...c, name: c.name ?? byLid.name, push_name: c.push_name ?? byLid.push_name };
+          alias = byLid.alias;
         }
         this.db.prepare('UPDATE contacts SET lid = NULL WHERE lid = ? AND jid != ?').run(c.lid, c.jid);
       }
       this.db.prepare(`
-        INSERT INTO contacts (jid, lid, name, push_name) VALUES (@jid, @lid, @name, @push_name)
+        INSERT INTO contacts (jid, lid, name, push_name, alias) VALUES (@jid, @lid, @name, @push_name, @alias)
         ON CONFLICT (jid) DO UPDATE SET
           lid       = COALESCE(@lid, lid),
           name      = COALESCE(@name, name),
-          push_name = COALESCE(@push_name, push_name)
-      `).run({ jid: c.jid, lid: c.lid ?? null, name: c.name ?? null, push_name: c.push_name ?? null });
+          push_name = COALESCE(@push_name, push_name),
+          alias     = COALESCE(alias, @alias)
+      `).run({ jid: c.jid, lid: c.lid ?? null, name: c.name ?? null, push_name: c.push_name ?? null, alias });
     });
     tx();
+  }
+
+  /** Replace all config-defined names. */
+  setAliases(aliases: Map<string, string>) {
+    this.db.transaction(() => {
+      this.db.prepare('UPDATE contacts SET alias = NULL WHERE alias IS NOT NULL').run();
+      const ins = this.db.prepare('INSERT INTO contacts (jid, alias) VALUES (?, ?) ON CONFLICT (jid) DO UPDATE SET alias = excluded.alias');
+      for (const [jid, alias] of aliases) ins.run(jid, alias);
+    })();
   }
 
   /** Look a contact up by phone JID or LID. */
