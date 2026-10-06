@@ -57,6 +57,8 @@ function sideband(url, callId, isRealtime) {
     if (ev.type === 'session.input_transcript.delta') { if (text.out) flush(); text.in += ev.delta ?? ''; return; }
     if (ev.type === 'session.output_transcript.delta') { if (text.in) flush(); text.out += ev.delta ?? ''; return; }
     if (ev.type === 'session.input_audio.append' || ev.type === 'session.usage.updated') return;
+    if (ev.type === 'conversation.item.input_audio_transcription.completed') return log('HEARD:', ev.transcript?.trim());
+    if (ev.type === 'response.output_audio_transcript.done') return log('SAID: ', ev.transcript?.trim());
     if (ev.type.includes('dtmf')) {
       log('DTMF', JSON.stringify(ev));
       if (!isRealtime) return say(`The caller pressed key ${ev.event} on the keypad.`);
@@ -98,7 +100,7 @@ http.createServer((req, res) => {
     } else if (ENGINE === 'realtime' && ev.type === 'realtime.call.incoming') {
       const { call_id, sip_headers } = ev.data;
       log('headers', JSON.stringify(sip_headers));
-      const r = await api(`/realtime/calls/${call_id}/accept`, { type: 'realtime', model: MODEL, instructions: INSTRUCTIONS, audio: { output: { voice: VOICE }, input: { turn_detection: { type: 'server_vad', silence_duration_ms: 300, prefix_padding_ms: 300 } } } });
+      const r = await api(`/realtime/calls/${call_id}/accept`, { type: 'realtime', model: MODEL, instructions: INSTRUCTIONS, audio: { output: { voice: VOICE }, input: { transcription: { model: 'gpt-4o-mini-transcribe' }, turn_detection: { type: 'server_vad', silence_duration_ms: 300, prefix_padding_ms: 300 } } } });
       log('accept realtime', r.status, r.ok ? '' : await r.text());
       if (r.ok) sideband(`wss://api.openai.com/v1/realtime?call_id=${call_id}`, call_id, true);
     }
