@@ -93,6 +93,14 @@ describe('config', () => {
 });
 
 describe('contacts', () => {
+  it('ignores masked-number placeholders as names', async () => {
+    const { displayName } = await import('../src/config/names.ts');
+    const store = makeStore();
+    store.upsertContact({ jid: '18475550181@s.whatsapp.net', name: '+1∙∙∙∙∙∙∙∙81', push_name: 'Rivka Stein' });
+    expect(displayName(store, '18475550181@s.whatsapp.net')).toBe('Rivka Stein');
+    expect(buildDirectory(store)[0]!.names).toEqual(['Rivka Stein']);
+  });
+
   it('routes a LID-addressed update to the phone-JID row', () => {
     const store = makeStore();
     store.upsertContact({ jid: YOSSI, lid: '77@lid', name: 'Yossi Cohen' });

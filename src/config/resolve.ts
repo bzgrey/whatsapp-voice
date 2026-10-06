@@ -1,5 +1,5 @@
 import type { Store } from '../db/store.ts';
-import { normalizeName } from './names.ts';
+import { isRealName, normalizeName } from './names.ts';
 import { jidPhone, normalizePhone } from './phone.ts';
 
 /** Something that can be named: a contact (DM) or a group. */
@@ -25,7 +25,7 @@ export function buildDirectory(store: Store): Entry[] {
   const out = new Map<string, Entry>();
   const activity = store.lastActivityAll();
   for (const c of store.allContacts()) {
-    const names = [c.name, c.push_name].filter((n): n is string => !!n);
+    const names = [c.name, c.push_name].filter(isRealName);
     out.set(c.jid, {
       jid: c.jid,
       aliases: c.lid && c.lid !== c.jid ? [c.lid] : [],

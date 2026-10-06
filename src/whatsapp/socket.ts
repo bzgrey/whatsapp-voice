@@ -14,6 +14,7 @@ import { bareJid, isSupportedJid, type Me } from '../ingest/filter.ts';
 import type { Ingest } from '../ingest/ingest.ts';
 import { errMsg, log } from '../log.ts';
 import { setWaStatus } from './status.ts';
+import { isRealName } from '../config/names.ts';
 
 interface Deps {
   store: Store;
@@ -157,7 +158,7 @@ export class WhatsApp implements Sender, MediaFetcher {
     const jid = pn ?? lid;
     if (!jid || !isSupportedJid(jid) || jid.endsWith('@g.us')) return;
     if (pn && lid) this.d.ingest.mapLid(lid, pn);
-    this.d.store.upsertContact({ jid, lid, name: c.name || null, push_name: c.notify || null });
+    this.d.store.upsertContact({ jid, lid, name: isRealName(c.name) ? c.name : null, push_name: isRealName(c.notify) ? c.notify : null });
   }
 
   private onChat(c: { id?: string | null; name?: string | null; archived?: boolean | null; unreadCount?: number | null }) {
