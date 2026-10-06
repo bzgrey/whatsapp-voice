@@ -8,7 +8,9 @@ A WhatsApp voice assistant for a yeshiva student with a kosher phone (no screen,
 
 - **SPEC.md is the source of truth for behaviour** (briefing format, tiers, sending, call flow, code design).
 - **PLAN.md** covers infrastructure, costs, the roadmap and the checklist. Update its checklist when you finish something.
-- **deploy/README.md** describes the VPS call-path test setup (Asterisk, Caddy, `deploy/voice-test/webhook.mjs`). That webhook is a throwaway test handler and is still in use for choosing the call model. Don't change the VPS unless asked: restarting `voice-test` drops a live call.
+- **This repo is public** (github.com/bzgrey/whatsapp-voice). Never commit real phone numbers, the PIN, family names, the server IP/hostname or the Yemot number; use placeholders. The real values live only in gitignored `config.yaml` and `deploy/LOCAL.md`. Push only `master` (a local `backup/pre-scrub` branch holds unscrubbed history).
+- **Deploy:** push, then on the server `git pull --ff-only && npm ci && systemctl restart whatsapp-voice` (see deploy/README.md; SSH details in `deploy/LOCAL.md`).
+- **deploy/README.md** describes the VPS call-path test setup (Asterisk, Caddy, `deploy/voice-test/webhook.mjs`). The VPS now runs the full app as `whatsapp-voice.service`; `voice-test` is retired. Restarting drops a live call, so check `asterisk -rx "core show channels"` first.
 
 ## Commands
 
