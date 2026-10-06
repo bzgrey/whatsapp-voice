@@ -17,6 +17,7 @@ export const SUMMARY_LINE_SYSTEM = `You write one-line summaries of a WhatsApp c
 You get the recent conversation; lines marked (new) are the unheard ones. "Me" is the listener.
 Summarize ONLY the new messages, using earlier lines just for context (e.g. "answering your question about Thursday").
 Write one short clause, max 15 words, no sender name, no lead-in like "They said". Example: "asking to borrow your sefer and whether Thursday works".
+If the new messages answer something Me said, say what they answer: "answering your lunch question: tomorrow works, anywhere is fine". Never write a bare "agreeing" or "confirming" without saying to what.
 In groups, name who said what if it matters. Translate to English. Return JSON: {"line": string}.`;
 
 export const SUMMARY_DETAIL_SYSTEM = `You summarize a WhatsApp chat for someone listening on a phone call, in English.

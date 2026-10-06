@@ -1,7 +1,7 @@
 import type { Store } from '../db/store.ts';
 import type { MessageRow, Tier } from '../db/types.ts';
 import { displayName } from '../config/names.ts';
-import { senderNamer, summaryFresh } from '../ingest/summaries.ts';
+import { narrationFor, summaryFresh } from '../ingest/summaries.ts';
 import { messageContent, renderMessages, wordCount, WORDS_PER_SECOND } from './render.ts';
 
 /** Above this a flagged chat gets a quick summary before the verbatim read (~30 s). */
@@ -95,7 +95,6 @@ function rollcallLine(g: ChatGroup, real: MessageRow[], trivial: string): string
 export function buildBriefing(groups: ChatGroup[], store: Store): { items: Item[]; counts: Counts } {
   const items: Item[] = [];
   const recent = (a: ChatGroup, b: ChatGroup) => b.lastActivity - a.lastActivity;
-  const sender = senderNamer(store);
   const rest = new Map<string, MessageRow[]>();
 
   // 1. Urgent, newest first.
@@ -105,7 +104,7 @@ export function buildBriefing(groups: ChatGroup[], store: Store): { items: Item[
     const urgent = g.messages.filter((m) => m.is_urgent);
     const remaining = g.messages.filter((m) => !m.is_urgent);
     urgentCount += urgent.length;
-    const r = renderMessages(urgent, g.isGroup ? sender : null);
+    const r = renderMessages(urgent, narrationFor(store, urgent));
     // A chat with nothing else to say is finished by its urgent item (trivia included).
     const done = !remaining.some((m) => !m.is_trivial);
     items.push({ kind: 'urgent', jid: g.jid, name: g.name, isGroup: g.isGroup, lines: r.lines, messageIds: ids(done ? g.messages : urgent) });
@@ -117,7 +116,7 @@ export function buildBriefing(groups: ChatGroup[], store: Store): { items: Item[
   const flagged = groups.filter((g) => g.tier === 'flagged' && remainingOf(g)).sort(recent);
   const rendered = flagged.map((g) => {
     const msgs = remainingOf(g)!;
-    const r = renderMessages(msgs, g.isGroup ? sender : null);
+    const r = renderMessages(msgs, narrationFor(store, msgs));
     return { g, msgs, r, words: wordCount(r.lines.join(' ')) };
   });
   const overBudget = rendered.reduce((n, x) => n + x.words, 0) > FLAGGED_BUDGET_WORDS;
@@ -169,7 +168,7 @@ export function itemPrompt(item: Item): string {
   const verbatim = (lines: string[]) => lines.map((l) => `  ${l}`).join('\n');
   switch (item.kind) {
     case 'urgent':
-      return `Say "Urgent, from ${item.name}:" then read these verbatim, in their original language, without translating:\n${verbatim(item.lines)}`;
+      return `Say "Urgent." then read these lines as written. Each names who sent it; read the quoted text verbatim in its original language, without translating:\n${verbatim(item.lines)}`;
     case 'flagged': {
       const head = `Flagged chat: ${item.name}${item.isGroup ? ' (group)' : ''}, ${item.count} message${item.count === 1 ? '' : 's'}.`;
       const tail = item.trivial ? `\nThen mention: plus ${item.trivial}.` : '';
@@ -180,11 +179,11 @@ export function itemPrompt(item: Item): string {
       }
       const intro = item.mode === 'summary_then_read' && item.summary
         ? `Say "${item.name}:" and this quick summary: "${item.summary}". Then read the messages verbatim.`
-        : `Say "${item.name}:" then read the messages verbatim. Don't announce that it's flagged or how many there are.`;
-      return `${head} ${intro} Keep their original language; don't translate unless asked:\n${verbatim(item.lines)}${tail}`;
+        : `Read these lines as written, one sentence per message with a short pause between. Don't announce that it's flagged or how many there are.`;
+      return `${head} ${intro} Read the quoted text verbatim in its original language; don't translate unless asked:\n${verbatim(item.lines)}${tail}`;
     }
     case 'rollcall':
-      return `Roll call. Say each line as written, one after another, with no introduction:\n${item.entries.map((e) => `  ${e.name}, ${e.line}.`).join('\n')}`;
+      return `Roll call. Say each line as written, with a short pause between chats, no introduction:\n${item.entries.map((e) => `  ${e.name}, ${e.line}.`).join('\n')}`;
   }
 }
 

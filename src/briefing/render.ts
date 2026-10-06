@@ -71,6 +71,30 @@ export function trivialTag(trivial: MessageRow[]): string {
   return list;
 }
 
+/**
+ * A message as the object of a spoken sentence, for narration:
+ * '"See you at 8"', 'a photo of the baby, captioned "first steps"', 'a voice note: "…"'.
+ */
+export function messageObject(m: MessageRow, opts: { describeImage?: boolean } = {}): string {
+  const caption = m.raw_text?.trim() ? `, captioned ${quoted(m.raw_text)}` : '';
+  switch (m.type) {
+    case 'text': return quoted(m.raw_text ?? '') + (m.media_desc ? ` (a link: ${m.media_desc})` : '');
+    case 'voice': return m.transcript ? `a voice note: ${quoted(m.transcript)}` : 'a voice note, not yet transcribed';
+    case 'image': return (opts.describeImage !== false && m.media_desc ? `a photo of ${m.media_desc.replace(/^(a |an )?photo of /i, '')}` : 'a photo') + caption;
+    default: return messageContent(m, opts);
+  }
+}
+
+/** How each message is introduced when read aloud. */
+export interface Narration {
+  /** Who sent it ("Mom", "Yossi"); "You" for my own. */
+  senderOf: (m: MessageRow) => string;
+  /** What it replies to, e.g. 'your message "Did it work?"', or null. */
+  replyOf?: (m: MessageRow) => string | null;
+  /** Context for the first message, e.g. 'your message "Did it work?"' when it follows something I sent. */
+  after?: string | null;
+}
+
 export interface Rendered {
   /** Speakable lines, one per non-trivial message. */
   lines: string[];
@@ -81,14 +105,19 @@ export interface Rendered {
 }
 
 /**
- * Render a chat's messages for reading out. Images beyond the first two are
- * collapsed into "and 6 more photos" (SPEC §2.5). `senderOf` names the sender
- * in groups; pass null for DMs.
+ * Render a chat's messages for reading out, one narrated sentence each so the
+ * listener can tell messages and people apart:
+ *   Mom, after your message "Did it work?", wrote: "3333 worked!"
+ *   Then a photo of a gray cap, captioned "is this yours?"
+ *   Yossi, replying to your message "Shiur at 9?", wrote: "yes"
+ * Images beyond the first two collapse into "and 6 more photos" (SPEC §2.5).
+ * With no narration, lines are bare content (used for counting only).
  */
-export function renderMessages(msgs: MessageRow[], senderOf: ((m: MessageRow) => string) | null): Rendered {
+export function renderMessages(msgs: MessageRow[], narration: Narration | null): Rendered {
   const real = msgs.filter((m) => !m.is_trivial);
   const trivial = msgs.filter((m) => m.is_trivial);
   const lines: string[] = [];
+  let prevSender: string | null = null;
   let images = 0;
   let extraImages = 0;
   for (const m of real) {
@@ -96,8 +125,18 @@ export function renderMessages(msgs: MessageRow[], senderOf: ((m: MessageRow) =>
       images++;
       if (images > MAX_DESCRIBED_IMAGES) { extraImages++; continue; }
     }
-    const content = messageContent(m, { describeImage: m.type !== 'image' || images <= MAX_DESCRIBED_IMAGES });
-    lines.push(senderOf ? `${senderOf(m)}: ${content}` : content);
+    const describeImage = m.type !== 'image' || images <= MAX_DESCRIBED_IMAGES;
+    if (!narration) { lines.push(messageContent(m, { describeImage })); continue; }
+    const who = narration.senderOf(m);
+    const same = lines.length > 0 && prevSender === who;
+    prevSender = who;
+    const reply = narration.replyOf?.(m) ?? (lines.length === 0 ? narration.after ?? null : null);
+    const ctx = reply ? `, ${narration.replyOf?.(m) ? 'replying to' : 'after'} ${reply},` : '';
+    const object = messageObject(m, { describeImage });
+    const verb = m.type === 'text' ? 'wrote:' : m.type === 'reaction' ? '' : 'sent';
+    lines.push(same
+      ? `Then${ctx ? ctx.replace(/,$/, ':') : m.type === 'text' ? ':' : ''} ${m.type === 'reaction' ? messageContent(m) : object}`
+      : `${who}${ctx} ${m.type === 'reaction' ? messageContent(m) : `${verb} ${object}`}`);
   }
   if (extraImages) lines.push(`and ${plural(extraImages, 'one more photo', 'more photos')}`);
   return { lines, trivial: trivialTag(trivial), count: real.length };

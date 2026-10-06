@@ -7,7 +7,7 @@ import { errMsg, log } from '../log.ts';
 import { displayName, normalizeName } from '../config/names.ts';
 import { normalizePhone } from '../config/phone.ts';
 import { buildDirectory, resolveSpokenWithFallback, type Entry } from '../config/resolve.ts';
-import { chatContext, refreshSummaryLine, senderNamer } from '../ingest/summaries.ts';
+import { chatContext, narrationFor, refreshSummaryLine, senderNamer } from '../ingest/summaries.ts';
 import { getWaStatus } from '../whatsapp/status.ts';
 import {
   buildBriefing, countsSentence, gatherUnheard, itemChat, itemMessageIds, itemPrompt, itemSpeakable, type Item,
@@ -324,10 +324,10 @@ export class CallSession {
     return days <= 0 ? 'today' : days === 1 ? 'yesterday' : `${days} days ago`;
   }
 
-  private speakLines(msgs: MessageRow[], isGroup: boolean): string[] {
-    const sender = senderNamer(this.d.store);
-    return msgs.map((m) => `${m.from_me ? 'You' : isGroup ? sender(m) : 'They'}: ${messageContent(m)}`);
+  private speakLines(msgs: MessageRow[]): string[] {
+    return renderMessages(msgs, narrationFor(this.d.store, msgs)).lines;
   }
+
 
   private async readChat(chat: string | undefined): Promise<string> {
     const { entry, ask } = await this.resolve(chat);
@@ -338,12 +338,12 @@ export class CallSession {
     if (!unheard.length) {
       const recent = store.recentForChat(entry.jid, now() - RETENTION_SECONDS, 8);
       if (!recent.length) return `There are no messages from ${entry.label} in the last 4 days. Say so.`;
-      return `No new messages from ${entry.label}. The most recent ones, oldest first; read them verbatim in their original language:\n${this.speakLines(recent, entry.isGroup).map((l) => `  ${l}`).join('\n')}`;
+      return `No new messages from ${entry.label}. The most recent ones, oldest first; read these lines as written, the quoted text verbatim in its original language:\n${this.speakLines(recent).map((l) => `  ${l}`).join('\n')}`;
     }
-    const r = renderMessages(unheard, entry.isGroup ? senderNamer(store) : null);
+    const r = renderMessages(unheard, narrationFor(store, unheard));
     this.hand(unheard.map((m) => m.rowid), entry.jid);
     this.expect(`Read ${entry.label}'s messages to the caller.`, r.lines.join(' '));
-    return `${entry.label}, ${r.count} new message${r.count === 1 ? '' : 's'}. Read them verbatim, in their original language, without translating:\n${r.lines.map((l) => `  ${l}`).join('\n')}${r.trivial ? `\nThen mention: plus ${r.trivial}.` : ''}`;
+    return `${entry.label}, ${r.count} new message${r.count === 1 ? '' : 's'}. Read these lines as written; each names who sent it. Read the quoted text verbatim in its original language, without translating:\n${r.lines.map((l) => `  ${l}`).join('\n')}${r.trivial ? `\nThen mention: plus ${r.trivial}.` : ''}`;
   }
 
   private async summarizeChat(chat: string | undefined): Promise<string> {

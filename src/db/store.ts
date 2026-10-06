@@ -217,6 +217,14 @@ export class Store {
     this.db.transaction(() => rowids.forEach((id) => stmt.run(now, id)))();
   }
 
+  /** The message just before this one in its chat (either direction). */
+  messageBefore(jid: string, rowid: number, createdAt: number): MessageRow | undefined {
+    return this.db.prepare(`
+      SELECT * FROM messages WHERE chat_jid = ? AND type != 'reaction' AND (created_at < ? OR (created_at = ? AND rowid < ?))
+      ORDER BY created_at DESC, rowid DESC LIMIT 1
+    `).get(jid, createdAt, createdAt, rowid) as MessageRow | undefined;
+  }
+
   /** Newest message from someone else in a chat (the target of a quote-reply). */
   lastIncoming(jid: string): MessageRow | undefined {
     return this.db.prepare(`

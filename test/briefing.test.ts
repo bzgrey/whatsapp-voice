@@ -88,3 +88,32 @@ describe('render', () => {
     expect(trivialTag([msg({ type: 'reaction' }), msg({ type: 'reaction' }), msg({ raw_text: '👍' })])).toBe('a couple of reactions and a thumbs-up');
   });
 });
+
+describe('narration', () => {
+  it('names each sender, marks continuations, and says what a message answers', async () => {
+    const { narrationFor } = await import('../src/ingest/summaries.ts');
+    const store = setup();
+    addMessage(store, MOM, { id: 'mine', from_me: 1, raw_text: 'Did the code work?', created_at: 1000 });
+    addMessage(store, MOM, { type: 'image', raw_text: 'is this hat yours?', media_desc: 'a gray baseball cap on a purple blanket', created_at: 1010 });
+    addMessage(store, MOM, { raw_text: '3333 worked!', created_at: 1020 });
+    addMessage(store, MOM, { raw_text: 'yes', quoted_id: 'mine', created_at: 1030 });
+    const unheard = store.unheardForChat(MOM);
+    expect(renderMessages(unheard, narrationFor(store, unheard)).lines).toEqual([
+      'Mom, after your message "Did the code work?", sent a photo of a gray baseball cap on a purple blanket, captioned "is this hat yours?"',
+      'Then: "3333 worked!"',
+      'Then, replying to your message "Did the code work?": "yes"',
+    ]);
+  });
+
+  it('names every speaker in a group', async () => {
+    const { narrationFor } = await import('../src/ingest/summaries.ts');
+    const store = setup();
+    addMessage(store, FAMILY, { sender_jid: MOM, raw_text: 'Who brings salads?', created_at: 1000 });
+    addMessage(store, FAMILY, { sender_jid: YOSSI, raw_text: 'I will', created_at: 1010 });
+    const unheard = store.unheardForChat(FAMILY);
+    expect(renderMessages(unheard, narrationFor(store, unheard)).lines).toEqual([
+      'Mom wrote: "Who brings salads?"',
+      'Yossi Cohen wrote: "I will"',
+    ]);
+  });
+});
