@@ -13,6 +13,8 @@ export interface Entry {
   names: string[];
   label: string;
   lastActivity: number | null;
+  /** My own "message yourself" chat. */
+  self?: boolean;
 }
 
 export type Resolution =
@@ -59,7 +61,7 @@ function addSelf(store: Store, out: Map<string, Entry>) {
   const existing = out.get(me.jid);
   const names = [...new Set(['Me', 'Myself', ...(isRealName(me.name) ? [me.name!] : []), ...(existing?.names ?? [])])];
   out.set(me.jid, {
-    jid: me.jid, aliases: existing?.aliases ?? [], isGroup: false, names, label: 'yourself',
+    jid: me.jid, aliases: existing?.aliases ?? [], isGroup: false, names, label: 'yourself', self: true,
     lastActivity: existing?.lastActivity ?? null,
   });
 }
@@ -159,6 +161,9 @@ export function resolveSpoken(dir: Entry[], text: string, kind?: 'person' | 'gro
   const top = Math.max(...scored.map((x) => x.s));
   const best = scored.filter((x) => x.s === top).map((x) => x.e);
   if (best.length === 1) return { status: 'ok', entry: best[0]! };
+  // "Me" means me, even if someone saved a contact as "Me".
+  const self = best.find((e) => e.self);
+  if (self) return { status: 'ok', entry: self };
   return { status: 'ambiguous', matches: best.sort((a, b) => (b.lastActivity ?? 0) - (a.lastActivity ?? 0)) };
 }
 

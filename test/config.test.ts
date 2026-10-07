@@ -35,6 +35,7 @@ describe('name resolution', () => {
   it('finds my own chat as "me" or by my WhatsApp name, even misspelled', () => {
     const s = makeStore();
     s.upsertContact({ jid: '1@s.whatsapp.net', name: 'Benny Frank' });
+    s.upsertContact({ jid: '2@s.whatsapp.net', name: 'me' });
     s.setKv('me', JSON.stringify({ jid: '972535551234@s.whatsapp.net', name: 'Benny Grey' }));
     const d = buildDirectory(s);
     for (const q of ['me', 'myself', 'Benny Grey', 'Benny Gray']) {
