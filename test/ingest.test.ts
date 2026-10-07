@@ -57,6 +57,15 @@ describe('ingest', () => {
     expect((store.db.prepare("SELECT COUNT(*) n FROM jobs WHERE kind = 'classify'").get() as { n: number }).n).toBe(1);
   });
 
+  it('counts everything before my reply as heard, and keeps what comes after', () => {
+    const { store, feed } = setup();
+    feed({ key: { remoteJid: MOM }, message: { conversation: 'did the code work?' }, messageTimestamp: NOW - 60 });
+    feed({ key: { remoteJid: YOSSI }, message: { conversation: 'thursday?' }, messageTimestamp: NOW - 60 });
+    feed({ key: { remoteJid: MOM, fromMe: true }, message: { conversation: 'yes, 3333' }, messageTimestamp: NOW - 30 });
+    feed({ key: { remoteJid: MOM }, message: { conversation: 'great!' } });
+    expect(store.unheard().map((m) => m.raw_text)).toEqual(['thursday?', 'great!']);
+  });
+
   it('applies deletes and edits', () => {
     const { store, feed } = setup();
     feed({ key: { remoteJid: YOSSI, id: 'X' }, message: { conversation: 'tuesday' } });

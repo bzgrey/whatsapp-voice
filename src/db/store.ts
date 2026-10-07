@@ -217,6 +217,12 @@ export class Store {
     this.db.transaction(() => rowids.forEach((id) => stmt.run(now, id)))();
   }
 
+  /** Mark a chat's incoming messages up to a time as heard (I replied, so I saw them). Returns how many. */
+  markHeardUpTo(jid: string, upTo: number, now: number): number {
+    return this.db.prepare('UPDATE messages SET heard_at = ? WHERE chat_jid = ? AND from_me = 0 AND heard_at IS NULL AND created_at <= ?')
+      .run(now, jid, upTo).changes;
+  }
+
   /** The message just before this one in its chat (either direction). */
   messageBefore(jid: string, rowid: number, createdAt: number): MessageRow | undefined {
     return this.db.prepare(`

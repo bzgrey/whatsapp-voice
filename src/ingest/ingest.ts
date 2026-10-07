@@ -114,7 +114,11 @@ export class Ingest {
     if (rowid === null) return null;
 
     log.info(`stored ${ex.fromMe ? 'outgoing' : 'incoming'} ${ex.type} in ${displayName(this.store, chatJid, isGroup ? null : ex.pushName)}`);
-    if (ex.fromMe) return rowid;
+    if (ex.fromMe) {
+      // Replying (or reacting) means I've seen everything before it: don't brief it again.
+      if (this.store.markHeardUpTo(chatJid, ex.timestamp, now)) this.store.enqueue('summarize', chatJid, now, now, true);
+      return rowid;
+    }
 
     if (ex.type === 'voice') this.store.enqueue('transcribe', rowid, now, now);
     else if (describe) this.store.enqueue('describe', rowid, now, now);
