@@ -402,7 +402,7 @@ export class CallSession {
     if (!text) return 'The message text is empty. Ask what they want to say.';
     if (!to?.trim() && !inContext) return 'Ask who the message is for.';
     const { entry, ask } = await this.resolve(to);
-    if (!entry) return ask!;
+    if (!entry) return `NO DRAFT SAVED: nothing will send yet. Don't read anything back or mention pressing 1. ${ask!}`;
     const { store, now } = this.d;
     const quoted = inContext && entry.jid === this.lastChat ? store.lastIncoming(entry.jid) ?? null : null;
     // A new draft replaces (corrects) one dictated in this call; a draft offered from an earlier call stays saved.
@@ -477,7 +477,10 @@ export class CallSession {
   /** The only path that sends a WhatsApp message (SPEC §5.4, §10.3). */
   private async send(): Promise<string> {
     const draft = this.activeDraft;
-    if (!draft) return 'The caller pressed 1, but there is nothing to send. Say so briefly.';
+    if (!draft) {
+      return 'The caller pressed 1, but no draft is saved (draft_message never returned "Draft saved", or it was already sent or cancelled). '
+        + 'Say briefly that nothing was saved to send. If they dictated a message, call draft_message again with the recipient\'s full name.';
+    }
     const { store, now, config, sender } = this.d;
     const cfg = config.config;
     const text = cfg.dictation_marker ? `${draft.text} ${cfg.dictation_marker_text}` : draft.text;

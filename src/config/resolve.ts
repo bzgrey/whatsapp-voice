@@ -96,6 +96,20 @@ export function resolveExact(dir: Entry[], text: string, kind?: 'person' | 'grou
   return { status: 'unknown' };
 }
 
+/** One typo apart, for words of 4+ letters: "Gray" ~ "Grey", "Kohen" ~ "Cohen" (speech-to-text spelling). */
+function near(a: string, b: string): boolean {
+  if (a.length < 4 || b.length < 4 || Math.abs(a.length - b.length) > 1) return false;
+  let i = 0, j = 0, edits = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (++edits > 1) return false;
+    if (a.length > b.length) i++;
+    else if (b.length > a.length) j++;
+    else { i++; j++; }
+  }
+  return edits + (a.length - i) + (b.length - j) <= 1;
+}
+
 function score(names: string[], q: string): number {
   const qTokens = q.split(' ');
   let best = 0;
@@ -108,6 +122,7 @@ function score(names: string[], q: string): number {
     if (n === q) s = 100;
     else if (qTokens.every((t) => nTokens.some((nt) => nt === t))) s = 85;
     else if (qTokens.every((t) => nTokens.some((nt) => nt.startsWith(t)))) s = 70;
+    else if (qTokens.every((t) => nTokens.some((nt) => nt.startsWith(t) || near(t, nt)))) s = 60;
     else if (n.includes(q)) s = 50;
     best = Math.max(best, s ? s - penalty : 0);
   });

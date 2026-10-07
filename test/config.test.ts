@@ -25,6 +25,8 @@ describe('name resolution', () => {
   it('resolves spoken names loosely, reporting ambiguity', () => {
     expect(resolveSpoken(dir, 'yossi cohen')).toMatchObject({ status: 'ok', entry: { jid: YOSSI } });
     expect(resolveSpoken(dir, 'the shiur group')).toMatchObject({ status: 'ok', entry: { jid: SHIUR } });
+    // Speech-to-text spelling: one letter off still finds the person.
+    expect(resolveSpoken(dir, 'Yossi Kohen')).toMatchObject({ status: 'ok', entry: { jid: YOSSI } });
     const r = resolveSpoken(dir, 'Dovid');
     expect(r.status).toBe('ambiguous');
     if (r.status === 'ambiguous') expect(r.matches).toHaveLength(2);

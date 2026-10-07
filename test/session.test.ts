@@ -173,7 +173,16 @@ describe('sending', () => {
     expect(sender.sent).toHaveLength(0);
     expect((await s.dtmf('1'))!.output).toMatch(/Sent/);
     expect(sender.sent).toEqual([{ jid: YOSSI, text: 'Sure, take it', quoted: expect.objectContaining({ id: 'Q' }) }]);
-    expect((await s.dtmf('1'))!.output).toMatch(/nothing to send/);
+    expect((await s.dtmf('1'))!.output).toMatch(/no draft is saved/);
+  });
+
+  it('says plainly when a draft was not saved, so the model never offers keypad 1', async () => {
+    const { call, sender } = setup();
+    const s = call();
+    await s.opening();
+    expect((await s.tool('draft_message', { to: 'Dovid', text: 'hi' })).output).toMatch(/^NO DRAFT SAVED.*could be/);
+    expect((await s.dtmf('1'))!.output).toMatch(/no draft is saved/);
+    expect(sender.sent).toHaveLength(0);
   });
 
   it('asks about ambiguous names unless context decides', async () => {
