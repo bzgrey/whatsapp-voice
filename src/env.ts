@@ -14,3 +14,5 @@ export const nowSec = () => Math.floor(Date.now() / 1000);
 
 /** Messages older than this are deleted and can't be recalled (SPEC §3.6, §10.8). */
 export const RETENTION_SECONDS = 4 * 24 * 3600;
+/** Messages older than this are assumed seen and left out of the briefing. */
+export const STALE_SECONDS = 2 * 24 * 3600;

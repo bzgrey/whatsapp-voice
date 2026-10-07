@@ -44,7 +44,7 @@ One Node process (`src/server.ts`) with one SQLite file. Secrets and paths come 
 
 Invariants enforced in code:
 - **Only keypad 1 sends** (`CallSession.send()`, reached only via `dtmf('1')`). No tool can send.
-- **Heard tracking:** message ids handed to the model become heard only on confirmation: the next tool call, `confirmSpoken()`, or keypad 2. A drop leaves them unheard and the call `dropped`, so the next call offers resume.
+- **Heard tracking:** message ids handed to the model become heard only on confirmation: the next tool call, `confirmSpoken()`, or keypad 2. A drop leaves them unheard and the call `dropped`, so the next call offers resume. Two shortcuts also mark messages heard: any outgoing message in a chat (I've seen what came before it), and age over 2 days (`STALE_SECONDS`, applied at call start and hourly).
 - **Never mark anything read on WhatsApp:** no `readMessages`/receipts, `markOnlineOnConnect: false`. After a send, the chat is optionally re-marked unread.
 - **4-day retention:** `Store.purgeBefore()` runs hourly and deletes messages, drafts and summaries built only from them. Ingest ignores older messages.
 - **Logging is metadata only** (`src/log.ts`): names, counts, errors, never message text. `silenceLibsignal()` drops libsignal's console output, which includes session key material.

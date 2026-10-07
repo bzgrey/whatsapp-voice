@@ -23,6 +23,14 @@ describe('auth', () => {
     expect((await s.opening()).output).toContain('No new messages.');
   });
 
+  it('treats messages older than 2 days as already seen', async () => {
+    const { store, call } = setup();
+    addMessage(store, YOSSI, { raw_text: 'old news', created_at: NOW - 3 * 86400 });
+    addMessage(store, MOM, { raw_text: 'call me', created_at: NOW - 3600 });
+    expect((await call('+972-53-555-1234').opening()).output).toContain('1 flagged.');
+    expect(store.unheard().map((m) => m.raw_text)).toEqual(['call me']);
+  });
+
   it('asks other callers for the PIN and hangs up after 3 wrong tries', async () => {
     const { call } = setup();
     const s = call('0529999999');

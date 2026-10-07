@@ -2,7 +2,7 @@ import type { ConfigSync, TierAction } from '../config/sync.ts';
 import type { Store } from '../db/store.ts';
 import type { DraftRow, MessageRow } from '../db/types.ts';
 import type { Tasks } from '../llm/tasks.ts';
-import { RETENTION_SECONDS } from '../env.ts';
+import { RETENTION_SECONDS, STALE_SECONDS } from '../env.ts';
 import { errMsg, log } from '../log.ts';
 import { displayName, normalizeName } from '../config/names.ts';
 import { normalizePhone } from '../config/phone.ts';
@@ -130,6 +130,7 @@ export class CallSession {
     const { store, now } = this.d;
     this.state = 'active';
     const t = now();
+    store.markHeardBefore(t - STALE_SECONDS, t);
     const groups = gatherUnheard(store);
     const { counts } = buildBriefing(groups, store);
 
