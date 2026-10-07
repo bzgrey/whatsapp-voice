@@ -117,9 +117,8 @@ export class RealtimeCall {
     this.playoutUntil = Math.max(this.io.now(), this.playoutUntil) + spokenMs;
 
     if (completed && spoke && this.hangupPending && !calls.length) {
-      const words = (r.output ?? []).flatMap((o) => o.content ?? []).map((c) => wordCount(c.transcript ?? '')).reduce((a, b) => a + b, 0);
       // response.done arrives when generation ends; let the audio finish playing first.
-      this.io.later(() => void this.hangup(), Math.max(2000, (words / WORDS_PER_SECOND) * 1000 + 1000));
+      this.io.later(() => void this.hangup(), Math.max(2000, spokenMs + 1000));
       return;
     }
 

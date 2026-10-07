@@ -79,7 +79,8 @@ async function runModel() {
     }
     if (!msg.tool_calls?.length) break;
     for (const tc of msg.tool_calls) {
-      const a = JSON.parse(tc.function.arguments || '{}');
+      let a: Record<string, unknown> = {};
+      try { a = JSON.parse(tc.function.arguments || '{}'); } catch { /* model sent bad JSON; tool gets no args */ }
       console.log(dim(`  → ${tc.function.name}(${JSON.stringify(a)})`));
       const out = await session.tool(tc.function.name, a);
       console.log(dim(out.output.split('\n').map((l) => `    ${l}`).join('\n')));

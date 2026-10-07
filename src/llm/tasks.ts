@@ -32,6 +32,8 @@ Return JSON: {"description": string}.`;
 const NAME_MATCH_SYSTEM = `You match a spoken name to WhatsApp contacts. Names may be in Hebrew, English or Yiddish, so match across scripts and transliterations ("Yossi" = "יוסי", "Moishe" = "משה").
 Return JSON {"ids": number[]}: the ids of every contact the spoken name could plausibly refer to, best first. Empty if none.`;
 
+const chatHeader = (name: string, isGroup: boolean) => (isGroup ? `Group "${name}"` : `Chat with ${name}`);
+
 const TRIVIAL_RE = /^(ok(ay)?|k|kk|thanks?|thank you|thx|ty|lol|haha+|np|👍|🙏|❤️|אוקי|אוקיי|בסדר|תודה|תודה רבה|סבבה|חחח+|a dank|dank)[.!\s]*$/iu;
 const EMOJI_ONLY_RE = /^[\p{Extended_Pictographic}\u{1F3FB}-\u{1F3FF}‍️\s]+$/u;
 
@@ -68,13 +70,13 @@ export class Tasks {
 
   async summaryLine(chatName: string, isGroup: boolean, lines: string[], timeoutMs?: number): Promise<string> {
     const r = await this.llm.json<{ line?: string }>('summary_line', this.models().summarize, SUMMARY_LINE_SYSTEM,
-      `${isGroup ? `Group "${chatName}"` : `Chat with ${chatName}`}:\n${lines.join('\n')}`, { timeoutMs, fast: true });
+      `${chatHeader(chatName, isGroup)}:\n${lines.join('\n')}`, { timeoutMs, fast: true });
     return (r.line ?? '').trim().replace(/\.$/, '');
   }
 
   async summaryDetail(chatName: string, isGroup: boolean, lines: string[]): Promise<string> {
     return this.llm.text('summary_detail', this.models().summarize, SUMMARY_DETAIL_SYSTEM,
-      `${isGroup ? `Group "${chatName}"` : `Chat with ${chatName}`}:\n${lines.join('\n')}`);
+      `${chatHeader(chatName, isGroup)}:\n${lines.join('\n')}`);
   }
 
   matchNames: NameMatcher = async (query, candidates) => {
