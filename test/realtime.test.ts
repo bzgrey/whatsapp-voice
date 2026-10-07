@@ -97,7 +97,7 @@ describe('realtime adapter', () => {
     const said = 'One two three four five six seven eight nine ten'; // 10 words = 4 s of audio
     await t.done([t.said(`Mom: are you coming home for Sukkos. ${said}`), t.fn('next_item')]);
     const sentBefore = t.outputs().length;
-    expect(t.timers.at(-1)!.ms).toBeGreaterThanOrEqual(1500 + 4000);
+    expect(t.timers.at(-1)!.ms).toBeGreaterThanOrEqual(750 + 4000);
     expect(t.outputs().length).toBe(sentBefore); // held back
     await t.call.onEvent({ type: 'input_audio_buffer.dtmf_event_received', event: '3' }); // not lost while waiting
     t.timers.at(-1)!.fn();

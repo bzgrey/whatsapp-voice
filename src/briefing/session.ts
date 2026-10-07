@@ -48,8 +48,8 @@ const SUMMARY_TIMEOUT_MS = 8000;
 const WA_WARN_AFTER_SECONDS = 120;
 
 /** Silence between urgent/flagged chats, and before the roll call. */
-export const PAUSE_BETWEEN_CHATS_MS = 1500;
-export const PAUSE_BEFORE_ROLLCALL_MS = 2000;
+export const PAUSE_BETWEEN_CHATS_MS = 750;
+export const PAUSE_BEFORE_ROLLCALL_MS = 1000;
 
 const NEXT = 'When you have said all of it out loud, call next_item to continue the briefing.';
 /** Share of a part's content words that must appear in what the model said. */
