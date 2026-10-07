@@ -32,6 +32,16 @@ describe('name resolution', () => {
     if (r.status === 'ambiguous') expect(r.matches).toHaveLength(2);
   });
 
+  it('finds my own chat as "me" or by my WhatsApp name, even misspelled', () => {
+    const s = makeStore();
+    s.upsertContact({ jid: '1@s.whatsapp.net', name: 'Benny Frank' });
+    s.setKv('me', JSON.stringify({ jid: '972535551234@s.whatsapp.net', name: 'Benny Grey' }));
+    const d = buildDirectory(s);
+    for (const q of ['me', 'myself', 'Benny Grey', 'Benny Gray']) {
+      expect(resolveSpoken(d, q)).toMatchObject({ status: 'ok', entry: { jid: '972535551234@s.whatsapp.net', label: 'yourself' } });
+    }
+  });
+
   it('flags an exact name shared by two contacts as ambiguous', () => {
     const s = makeStore();
     s.upsertContact({ jid: '1@s.whatsapp.net', name: 'Avi' });

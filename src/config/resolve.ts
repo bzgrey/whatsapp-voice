@@ -48,7 +48,20 @@ export function buildDirectory(store: Store): Entry[] {
       lastActivity: activity.get(chat.jid) ?? null,
     });
   }
+  addSelf(store, out);
   return [...out.values()];
+}
+
+/** My own chat ("message yourself"), reachable as "me", "myself" or my WhatsApp name. */
+function addSelf(store: Store, out: Map<string, Entry>) {
+  let me: { jid: string; name: string | null };
+  try { me = JSON.parse(store.getKv('me') ?? ''); } catch { return; }
+  const existing = out.get(me.jid);
+  const names = [...new Set(['Me', 'Myself', ...(isRealName(me.name) ? [me.name!] : []), ...(existing?.names ?? [])])];
+  out.set(me.jid, {
+    jid: me.jid, aliases: existing?.aliases ?? [], isGroup: false, names, label: 'yourself',
+    lastActivity: existing?.lastActivity ?? null,
+  });
 }
 
 const byJid = (dir: Entry[], jid: string) => dir.find((e) => e.jid === jid || e.aliases.includes(jid));

@@ -64,6 +64,8 @@ export class WhatsApp implements Sender, MediaFetcher {
       if (qr) this.showPairing(qr, !!state.creds.registered);
       if (connection === 'open') {
         this.me = { pn: sock.user?.id ? bareJid(sock.user.id) : null, lid: sock.user?.lid ? bareJid(sock.user.lid) : null };
+        // So "send it to me" (or my own name) finds my own "message yourself" chat.
+        if (this.me.pn) this.d.store.setKv('me', JSON.stringify({ jid: this.me.pn, name: sock.user?.name ?? null }));
         setWaStatus(this.d.store, 'open', this.d.now());
         log.info('whatsapp: connected');
         void this.syncGroupNames();
