@@ -1,5 +1,5 @@
 import makeWASocket, {
-  BufferJSON, DisconnectReason, downloadMediaMessage, fetchLatestBaileysVersion, useMultiFileAuthState,
+  BufferJSON, DisconnectReason, downloadMediaMessage, fetchLatestBaileysVersion, generateMessageIDV2, useMultiFileAuthState,
   type proto, type WAMessage, type WASocket,
 } from '@whiskeysockets/baileys';
 import pino from 'pino';
@@ -65,7 +65,7 @@ export class WhatsApp implements Sender, MediaFetcher {
       if (connection === 'open') {
         this.me = { pn: sock.user?.id ? bareJid(sock.user.id) : null, lid: sock.user?.lid ? bareJid(sock.user.lid) : null };
         // So "send it to me" (or my own name) finds my own "message yourself" chat.
-        if (this.me.pn) this.d.store.setKv('me', JSON.stringify({ jid: this.me.pn, name: sock.user?.name ?? null }));
+        if (this.me.pn) this.d.store.setKv('me', JSON.stringify({ jid: this.me.pn, lid: this.me.lid, name: sock.user?.name ?? null }));
         setWaStatus(this.d.store, 'open', this.d.now());
         log.info('whatsapp: connected');
         void this.syncGroupNames();
@@ -191,7 +191,10 @@ export class WhatsApp implements Sender, MediaFetcher {
       key: { remoteJid: jid, id: quoted.id, fromMe: !!quoted.from_me, participant: jid.endsWith('@g.us') ? quoted.sender_jid ?? undefined : undefined },
       message: { conversation: quoted.raw_text ?? quoted.transcript ?? '' },
     } : undefined;
-    const sent = await sock.sendMessage(jid, { text }, quotedMsg ? { quoted: quotedMsg } : undefined);
+    // Baileys echoes our own send through ingest before sendMessage returns, so pick the id first.
+    const messageId = generateMessageIDV2(sock.user.id);
+    this.d.ingest.expectCallSend(messageId);
+    const sent = await sock.sendMessage(jid, { text }, { messageId, ...(quotedMsg ? { quoted: quotedMsg } : {}) });
     if (sent?.key.id && sent.message) this.rememberSent(sent.key.id, sent.message);
     // If WhatsApp marks the chat read on my phone when the companion sends, put it back (SPEC open question 9).
     if (this.d.config.config.restore_unread_after_send && unreadBefore > 0 && sent) {

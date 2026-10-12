@@ -217,10 +217,21 @@ export class Store {
     this.db.transaction(() => rowids.forEach((id) => stmt.run(now, id)))();
   }
 
-  /** Mark every incoming message older than `cutoff` as heard. Returns how many. */
-  markHeardBefore(cutoff: number, now: number): number {
-    return this.db.prepare('UPDATE messages SET heard_at = ? WHERE from_me = 0 AND heard_at IS NULL AND created_at < ?')
-      .run(now, cutoff).changes;
+  /**
+   * Mark incoming messages older than `cutoff` as heard, except urgent ones (those wait for
+   * the 4-day purge). Their chats' one-liners are cleared, since they may describe them.
+   * Returns the chats touched.
+   */
+  markHeardBefore(cutoff: number, now: number): string[] {
+    const where = 'from_me = 0 AND heard_at IS NULL AND created_at < ? AND is_urgent IS NOT 1';
+    return this.db.transaction(() => {
+      const jids = (this.db.prepare(`SELECT DISTINCT chat_jid FROM messages WHERE ${where}`).all(cutoff) as { chat_jid: string }[])
+        .map((r) => r.chat_jid);
+      this.db.prepare(`UPDATE messages SET heard_at = ? WHERE ${where}`).run(now, cutoff);
+      const clear = this.db.prepare('UPDATE chats SET summary = NULL, summary_upto = NULL WHERE jid = ?');
+      for (const jid of jids) clear.run(jid);
+      return jids;
+    })();
   }
 
   /** Mark a chat's incoming messages up to a time as heard (I replied, so I saw them). Returns how many. */
@@ -365,10 +376,6 @@ export class Store {
 
   endCall(id: number, status: 'ended' | 'dropped', now: number) {
     this.db.prepare("UPDATE calls SET status = ?, ended_at = ? WHERE id = ? AND status = 'active'").run(status, now, id);
-  }
-
-  previousCall(beforeId: number): CallRow | undefined {
-    return this.db.prepare('SELECT * FROM calls WHERE id < ? ORDER BY id DESC LIMIT 1').get(beforeId) as CallRow | undefined;
   }
 
   // ---------- usage ----------

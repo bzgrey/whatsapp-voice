@@ -66,6 +66,14 @@ describe('ingest', () => {
     expect(store.unheard().map((m) => m.raw_text)).toEqual(['thursday?', 'great!']);
   });
 
+  it("doesn't count a send from the call as having seen the chat", () => {
+    const { store, ingest, feed } = setup();
+    feed({ key: { remoteJid: MOM }, message: { conversation: 'arrived mid-call' }, messageTimestamp: NOW - 10 });
+    ingest.expectCallSend('sent-by-call');
+    feed({ key: { remoteJid: MOM, fromMe: true, id: 'sent-by-call' }, message: { conversation: 'ok' } });
+    expect(store.unheard().map((m) => m.raw_text)).toEqual(['arrived mid-call']);
+  });
+
   it('applies deletes and edits', () => {
     const { store, feed } = setup();
     feed({ key: { remoteJid: YOSSI, id: 'X' }, message: { conversation: 'tuesday' } });

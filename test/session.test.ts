@@ -31,6 +31,16 @@ describe('auth', () => {
     expect(store.unheard().map((m) => m.raw_text)).toEqual(['call me']);
   });
 
+  it('still briefs an urgent message older than 2 days, and drops one-liners over stale messages', () => {
+    const { store } = setup();
+    addMessage(store, YOSSI, { raw_text: 'old news', created_at: NOW - 3 * 86400 });
+    addMessage(store, MOM, { raw_text: 'hospital, call', created_at: NOW - 3 * 86400, is_urgent: 1 });
+    store.setSummary(YOSSI, 'old news', 999999);
+    expect(store.markHeardBefore(NOW - 2 * 86400, NOW)).toEqual([YOSSI]);
+    expect(store.unheard().map((m) => m.raw_text)).toEqual(['hospital, call']);
+    expect(store.getChat(YOSSI)!.summary).toBeNull();
+  });
+
   it('asks other callers for the PIN and hangs up after 3 wrong tries', async () => {
     const { call } = setup();
     const s = call('0529999999');
@@ -118,7 +128,7 @@ describe('briefing flow', () => {
     expect((await s.tool('next_item', {})).output).toMatch(/Briefing finished/);
   });
 
-  it('offers to resume after a drop, and skips what was heard', async () => {
+  it('starts fresh after a drop, with whatever was not heard', async () => {
     const { store, call, tick } = setup();
     addMessage(store, MOM, { raw_text: 'call me' });
     addMessage(store, YOSSI, { raw_text: 'sefer?' });
@@ -130,22 +140,10 @@ describe('briefing flow', () => {
     tick(60);
     const s2 = call();
     const open = (await s2.opening()).output;
-    expect(open).toMatch(/Your last call dropped during Yossi Cohen\. Resume\?/);
-    s2.confirmSpoken();
-    const next = (await s2.tool('next_item', {})).output;
-    expect(next).toContain('1 chat.');
-    expect(next).toContain('Yossi');
-    expect(next).not.toContain('call me');
-  });
-
-  it('does not offer resume after a normal goodbye', async () => {
-    const { store, call } = setup();
-    addMessage(store, YOSSI, { raw_text: 'sefer?' });
-    const s1 = call();
-    await s1.opening();
-    await s1.tool('end_call', {});
-    s1.end();
-    expect((await call().opening()).output).not.toMatch(/dropped/);
+    expect(open).not.toMatch(/dropped|Resume/);
+    expect(open).toContain('1 chat.');
+    expect(open).toContain('Yossi');
+    expect(open).not.toContain('call me');
   });
 
   it('skips the rest with #, and warns when WhatsApp is down', async () => {
@@ -173,7 +171,7 @@ describe('sending', () => {
     expect(sender.sent).toHaveLength(0);
     expect((await s.dtmf('1'))!.output).toMatch(/Sent/);
     expect(sender.sent).toEqual([{ jid: YOSSI, text: 'Sure, take it', quoted: expect.objectContaining({ id: 'Q' }) }]);
-    expect((await s.dtmf('1'))!.output).toMatch(/no draft is saved/);
+    expect((await s.dtmf('1'))!.output).toMatch(/nothing to send/);
   });
 
   it('says plainly when a draft was not saved, so the model never offers keypad 1', async () => {
@@ -181,8 +179,19 @@ describe('sending', () => {
     const s = call();
     await s.opening();
     expect((await s.tool('draft_message', { to: 'Dovid', text: 'hi' })).output).toMatch(/^NO DRAFT SAVED.*could be/);
-    expect((await s.dtmf('1'))!.output).toMatch(/no draft is saved/);
+    expect((await s.dtmf('1'))!.output).toMatch(/nothing to send/);
     expect(sender.sent).toHaveLength(0);
+  });
+
+  it('a new draft whose name fails disarms the earlier one, so 1 sends nothing', async () => {
+    const { store, call, sender } = setup();
+    const s = call();
+    await s.opening();
+    await s.tool('draft_message', { to: 'Mom', text: 'running late' });
+    expect((await s.tool('draft_message', { to: 'Dovid', text: "I'll be there at 8" })).output).toMatch(/^NO DRAFT SAVED/);
+    expect((await s.dtmf('1'))!.output).toMatch(/nothing to send/);
+    expect(sender.sent).toHaveLength(0);
+    expect(store.pendingDrafts()).toHaveLength(0);
   });
 
   it('asks about ambiguous names unless context decides', async () => {

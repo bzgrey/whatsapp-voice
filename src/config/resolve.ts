@@ -18,8 +18,9 @@ export interface Entry {
 }
 
 export type Resolution =
-  | { status: 'ok'; entry: Entry }
-  | { status: 'ambiguous'; matches: Entry[] }
+  /** `weak`: only a typo-tolerant or substring match, worth a second opinion. */
+  | { status: 'ok'; entry: Entry; weak?: boolean }
+  | { status: 'ambiguous'; matches: Entry[]; weak?: boolean }
   | { status: 'unknown' };
 
 /** Everyone and every group we know about. */
@@ -56,13 +57,17 @@ export function buildDirectory(store: Store): Entry[] {
 
 /** My own chat ("message yourself"), reachable as "me", "myself" or my WhatsApp name. */
 function addSelf(store: Store, out: Map<string, Entry>) {
-  let me: { jid: string; name: string | null };
+  let me: { jid: string; lid?: string | null; name: string | null };
   try { me = JSON.parse(store.getKv('me') ?? ''); } catch { return; }
-  const existing = out.get(me.jid);
-  const names = [...new Set(['Me', 'Myself', ...(isRealName(me.name) ? [me.name!] : []), ...(existing?.names ?? [])])];
+  // My chat may also be stored under my LID; fold that entry in.
+  const existing = [out.get(me.jid), me.lid ? out.get(me.lid) : undefined].filter((e): e is Entry => !!e);
+  if (me.lid) out.delete(me.lid);
+  const names = [...new Set(['Me', 'Myself', ...(isRealName(me.name) ? [me.name!] : []), ...existing.flatMap((e) => e.names)])];
+  const aliases = [...new Set([...(me.lid && me.lid !== me.jid ? [me.lid] : []), ...existing.flatMap((e) => e.aliases)])];
+  const activity = existing.map((e) => e.lastActivity ?? 0);
   out.set(me.jid, {
-    jid: me.jid, aliases: existing?.aliases ?? [], isGroup: false, names, label: 'yourself', self: true,
-    lastActivity: existing?.lastActivity ?? null,
+    jid: me.jid, aliases, isGroup: false, names, label: 'yourself', self: true,
+    lastActivity: activity.length && Math.max(...activity) ? Math.max(...activity) : null,
   });
 }
 
@@ -125,6 +130,9 @@ function near(a: string, b: string): boolean {
   return edits + (a.length - i) + (b.length - j) <= 1;
 }
 
+/** Scores at or below this are only a typo-tolerant or substring match. */
+const WEAK_SCORE = 60;
+
 function score(names: string[], q: string): number {
   const qTokens = q.split(' ');
   let best = 0;
@@ -160,11 +168,12 @@ export function resolveSpoken(dir: Entry[], text: string, kind?: 'person' | 'gro
   if (!scored.length) return { status: 'unknown' };
   const top = Math.max(...scored.map((x) => x.s));
   const best = scored.filter((x) => x.s === top).map((x) => x.e);
-  if (best.length === 1) return { status: 'ok', entry: best[0]! };
-  // "Me" means me, even if someone saved a contact as "Me".
-  const self = best.find((e) => e.self);
+  const weak = top <= WEAK_SCORE || undefined;
+  if (best.length === 1) return { status: 'ok', entry: best[0]!, weak };
+  // "Me" means me, even if someone saved a contact as "Me". (A friend who shares my name stays ambiguous.)
+  const self = (q === 'me' || q === 'myself') && best.find((e) => e.self);
   if (self) return { status: 'ok', entry: self };
-  return { status: 'ambiguous', matches: best.sort((a, b) => (b.lastActivity ?? 0) - (a.lastActivity ?? 0)) };
+  return { status: 'ambiguous', matches: best.sort((a, b) => (b.lastActivity ?? 0) - (a.lastActivity ?? 0)), weak };
 }
 
 /** Narrow a candidate list with an LLM, for names in another script ("Yossi" vs "יוסי"). */
@@ -174,7 +183,8 @@ export async function resolveSpokenWithFallback(
   dir: Entry[], text: string, kind: 'person' | 'group' | undefined, matcher?: NameMatcher,
 ): Promise<Resolution> {
   const local = resolveSpoken(dir, text, kind);
-  if (local.status !== 'unknown' || !matcher) return local;
+  // A weak local match (e.g. "Rivka" ~ "Rivky") shouldn't hide a better one in another script ("רבקה").
+  if ((local.status !== 'unknown' && !local.weak) || !matcher) return local;
   const pool = (kind ? dir.filter((e) => e.isGroup === (kind === 'group')) : dir).filter((e) => e.names.length);
   if (!pool.length) return local;
   const ids = await matcher(text, pool.map((e, id) => ({ id, names: e.names })));

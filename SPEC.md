@@ -60,9 +60,8 @@ Outgoing messages, whether sent by voice or from any other device, are stored as
 ### 3.1 Call opening
 1. **Auth** (§6.1).
 2. **Health warning** (only if relevant): "Warning: WhatsApp has been disconnected since Tuesday." One sentence, nothing more.
-3. **Resume offer** (only if the last call dropped mid-briefing): "Your last call dropped during Yossi. Resume?"
-4. **Pending drafts** (only if any): "You had an unsent message to Mom: '…'. Press 1 to send." (§5.6)
-5. **Counts greeting**: "You have 1 urgent, 3 flagged chats, and 12 others."
+3. **Pending drafts** (only if any): "You had an unsent message to Mom: '…'. Press 1 to send." (§5.6)
+4. **Counts greeting**: "You have 1 urgent, 3 flagged chats, and 12 others."
 
 ### 3.2 Order
 1. **Urgent** messages (any non-muted chat)
@@ -153,7 +152,7 @@ Voice always works; the keypad is a fallback for noisy rooms and misrecognition.
 
 ### 6.4 Ending and drops
 - Ends when I say goodbye or hang up.
-- On a drop: record exactly how far the briefing got and any pending draft. The next call offers to resume (§3.1).
+- On a drop: nothing not yet spoken is marked heard, and any pending draft is kept. The next call starts a fresh briefing, which includes whatever wasn't heard (no "resume where you left off": it can land mid-thought).
 
 ## 7. Other
 
@@ -190,7 +189,7 @@ Voice always works; the keypad is a fallback for noisy rooms and misrecognition.
 - `messages`: add `chat_jid` (currently only `sender_jid`, so group messages can't be grouped by chat), `from_me`, `type` (text/voice/image/…), `media_desc` / `transcript`, `is_trivial`, `quoted_id`, `mentions_me`, `heard_at`. Drop `summary` and `requires_callback`.
 - New `chats` table: `jid`, `name`, `is_group`, `tier` (flagged/normal/mentions/muted), `archived`.
 - New `contacts` table: `jid`, `lid`, `name` (address-book), `push_name`.
-- New `drafts` table (pending unsent messages) and `call_state` (last call's progress, for resume).
+- New `drafts` table (pending unsent messages) and `calls` (call log: status, current chat).
 - `getUnheard()` ordering → grouped by chat, tier/urgent ordering per §3.2.
 
 **[whatsapp.js](whatsapp.js)**

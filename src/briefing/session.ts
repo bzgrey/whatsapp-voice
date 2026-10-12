@@ -37,7 +37,6 @@ export interface Output {
 
 type Step =
   | { kind: 'say'; text: string }
-  | { kind: 'resume'; name: string }
   | { kind: 'draft'; draft: DraftRow }
   | { kind: 'items' }
   | { kind: 'item'; item: Item };
@@ -151,11 +150,6 @@ export class CallSession {
         ? `Warning: WhatsApp has been logged out ${sincePhrase(wa.since, t)}. Someone needs to re-link it.`
         : `Warning: WhatsApp has been disconnected ${sincePhrase(wa.since, t)}.` });
     }
-    const prev = store.previousCall(this.callId);
-    if (prev?.status === 'dropped' && prev.in_briefing && prev.current_chat
-      && t - prev.started_at < RETENTION_SECONDS && store.unheardForChat(prev.current_chat).length) {
-      this.steps.push({ kind: 'resume', name: displayName(store, prev.current_chat) });
-    }
     // Offer every unsent draft, oldest first (normally zero or one).
     for (const draft of store.pendingDrafts().slice(0, 3).reverse()) this.steps.push({ kind: 'draft', draft });
     this.steps.push({ kind: 'say', text: countsSentence(counts) }, { kind: 'items' });
@@ -230,11 +224,6 @@ export class CallSession {
         const { items } = buildBriefing(gatherUnheard(store), store);
         this.steps.splice(this.pos, 0, ...items.map((item) => ({ kind: 'item' as const, item })));
         continue;
-      }
-      if (step.kind === 'resume') {
-        const q = `Your last call dropped during ${step.name}. Resume?`;
-        out.push(`Ask: "${q}" If yes, call next_item. If no, call skip_briefing and ask what they'd like to do.`);
-        return done(q);
       }
       if (step.kind === 'draft') {
         if (store.getDraft(step.draft.id)?.status !== 'pending') continue;
@@ -402,8 +391,14 @@ export class CallSession {
     if (!text) return 'The message text is empty. Ask what they want to say.';
     if (!to?.trim() && !inContext) return 'Ask who the message is for.';
     const { entry, ask } = await this.resolve(to);
-    if (!entry) return `NO DRAFT SAVED: nothing will send yet. Don't read anything back or mention pressing 1. ${ask!}`;
     const { store, now } = this.d;
+    if (!entry) {
+      // He's dictating something new, so keypad 1 must not send the earlier draft. One from this call
+      // is replaced (as a saved new draft would replace it); one offered from an earlier call stays saved for next time.
+      if (this.activeDraft && this.ownDrafts.has(this.activeDraft.id)) store.setDraftStatus(this.activeDraft.id, 'cancelled', now());
+      this.activeDraft = null;
+      return `NO DRAFT SAVED: nothing will send yet. Don't read anything back or mention pressing 1. ${ask!}`;
+    }
     const quoted = inContext && entry.jid === this.lastChat ? store.lastIncoming(entry.jid) ?? null : null;
     // A new draft replaces (corrects) one dictated in this call; a draft offered from an earlier call stays saved.
     if (this.activeDraft && this.ownDrafts.has(this.activeDraft.id)) store.setDraftStatus(this.activeDraft.id, 'cancelled', now());
@@ -478,8 +473,8 @@ export class CallSession {
   private async send(): Promise<string> {
     const draft = this.activeDraft;
     if (!draft) {
-      return 'The caller pressed 1, but no draft is saved (draft_message never returned "Draft saved", or it was already sent or cancelled). '
-        + 'Say briefly that nothing was saved to send. If they dictated a message, call draft_message again with the recipient\'s full name.';
+      return 'The caller pressed 1, but no draft is ready to send. Say briefly that there\'s nothing to send. '
+        + 'If they dictated a message that never got "Draft saved", call draft_message again with the recipient\'s full name.';
     }
     const { store, now, config, sender } = this.d;
     const cfg = config.config;
@@ -499,7 +494,7 @@ export class CallSession {
 
   // ---------- end ----------
 
-  /** The call is over (hung up, or after end_call). A drop mid-briefing is offered for resume next time. */
+  /** The call is over (hung up, or after end_call). Whatever wasn't heard stays unheard, so the next call's fresh briefing includes it. */
   end() {
     if (this.closed) return;
     this.closed = true;

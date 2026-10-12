@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { buildDirectory, resolveExact, resolveSpoken } from '../src/config/resolve.ts';
+import { buildDirectory, resolveExact, resolveSpoken, resolveSpokenWithFallback } from '../src/config/resolve.ts';
 import { computeTier } from '../src/config/sync.ts';
 import { parseConfig } from '../src/config/schema.ts';
 import { BUILDING, CONFIG, DOVID_C, FAMILY, makeConfig, makeStore, MOM, NOW, seedPeople, SHIUR, YOSSI } from './helpers.ts';
@@ -41,6 +41,26 @@ describe('name resolution', () => {
     for (const q of ['me', 'myself', 'Benny Grey', 'Benny Gray']) {
       expect(resolveSpoken(d, q)).toMatchObject({ status: 'ok', entry: { jid: '972535551234@s.whatsapp.net', label: 'yourself' } });
     }
+  });
+
+  it('keeps a friend who shares my name ambiguous, and folds my LID chat into my own', () => {
+    const s = makeStore();
+    s.upsertContact({ jid: '1@s.whatsapp.net', name: 'Benny Frank', push_name: 'Benny' });
+    s.upsertChat({ jid: '555@lid', is_group: false }, 1);
+    s.setKv('me', JSON.stringify({ jid: '972535551234@s.whatsapp.net', lid: '555@lid', name: 'Benny' }));
+    const d = buildDirectory(s);
+    expect(resolveSpoken(d, 'Benny').status).toBe('ambiguous');
+    expect(d.filter((e) => e.jid === '555@lid')).toHaveLength(0);
+    expect(resolveSpoken(d, '555@lid')).toMatchObject({ status: 'ok', entry: { self: true } });
+  });
+
+  it('asks the LLM matcher about a typo-only match', async () => {
+    const s = makeStore();
+    s.upsertContact({ jid: '1@s.whatsapp.net', name: 'Rivky' });
+    s.upsertContact({ jid: '2@s.whatsapp.net', name: 'רבקה' });
+    const d = buildDirectory(s);
+    const matcher = async (_q: string, c: { id: number; names: string[] }[]) => c.filter((x) => x.names.includes('רבקה')).map((x) => x.id);
+    expect(await resolveSpokenWithFallback(d, 'Rivka', undefined, matcher)).toMatchObject({ status: 'ok', entry: { jid: '2@s.whatsapp.net' } });
   });
 
   it('flags an exact name shared by two contacts as ambiguous', () => {

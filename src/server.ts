@@ -32,8 +32,10 @@ const worker = new JobWorker(store, new Enricher(store, tasks, wa, nowSec).run, 
 function purge() {
   const n = store.purgeBefore(nowSec() - RETENTION_SECONDS);
   if (n) log.info(`purge: deleted ${n} messages older than 4 days`);
-  const stale = store.markHeardBefore(nowSec() - STALE_SECONDS, nowSec());
-  if (stale) log.info(`purge: ${stale} messages older than 2 days assumed seen`);
+  const now = nowSec();
+  const stale = store.markHeardBefore(now - STALE_SECONDS, now);
+  for (const jid of stale) store.enqueue('summarize', jid, now, now, true);
+  if (stale.length) log.info(`purge: messages older than 2 days assumed seen in ${stale.length} chats`);
 }
 
 const app = express();

@@ -26,6 +26,14 @@ export class Ingest {
   /** Called the first time a group is seen, to look up its name. */
   onNewGroup?: (jid: string) => void;
 
+  /** Ids of messages the call is sending right now; their echo isn't a sign I've seen the chat. */
+  private callSends = new Set<string>();
+
+  /** Call before sending from a call, with the id the message will carry. */
+  expectCallSend(id: string) {
+    this.callSends.add(id);
+  }
+
   /** Record a LID ↔ phone mapping and move anything stored under the LID. */
   mapLid(lid: string, pn: string) {
     lid = bareJid(lid);
@@ -116,6 +124,8 @@ export class Ingest {
     log.info(`stored ${ex.fromMe ? 'outgoing' : 'incoming'} ${ex.type} in ${displayName(this.store, chatJid, isGroup ? null : ex.pushName)}`);
     if (ex.fromMe) {
       // Replying (or reacting) means I've seen everything before it: don't brief it again.
+      // Not for a send from the call: messages that arrived mid-call may not have been read to him.
+      if (this.callSends.delete(ex.id)) return rowid;
       if (this.store.markHeardUpTo(chatJid, ex.timestamp, now)) this.store.enqueue('summarize', chatJid, now, now, true);
       return rowid;
     }
