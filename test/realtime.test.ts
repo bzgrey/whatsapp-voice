@@ -16,11 +16,12 @@ function setup(caller = '0535551234', seed: (store: ReturnType<typeof makeStore>
   const sent: any[] = [];
   const timers: { fn: () => void; ms: number }[] = [];
   let hungUp = 0;
+  let clock = 0;
   const call = new RealtimeCall(session, {
     send: (e) => sent.push(e),
     hangup: async () => { hungUp++; },
     later: (fn, ms) => timers.push({ fn, ms }),
-    now: () => 0,
+    now: () => clock,
   }, store, 'gpt-realtime-2.1-mini');
   const notes = () => sent.filter((e) => e.item?.role === 'user').map((e) => e.item.content[0].text as string);
   const outputs = () => sent.filter((e) => e.item?.type === 'function_call_output').map((e) => e.item.output as string);
@@ -28,7 +29,7 @@ function setup(caller = '0535551234', seed: (store: ReturnType<typeof makeStore>
     call.onEvent({ type: 'response.done', response: { status, output, usage: { input_tokens: 100, output_tokens: 50, input_token_details: { audio_tokens: 80 }, output_token_details: { audio_tokens: 40 } } } });
   const said = (transcript = 'ok') => ({ type: 'message', content: [{ transcript }] });
   const fn = (name: string, args = {}) => ({ type: 'function_call', name, call_id: `c_${name}`, arguments: JSON.stringify(args) });
-  return { store, config, sender, session, call, sent, timers, notes, outputs, done, said, fn, hungUp: () => hungUp };
+  return { store, config, sender, session, call, sent, timers, notes, outputs, done, said, fn, hungUp: () => hungUp, wait: (ms: number) => (clock += ms) };
 }
 
 describe('realtime adapter', () => {
@@ -49,8 +50,20 @@ describe('realtime adapter', () => {
     await t.done([t.said('You have one flagged chat. Mom says: call me')], 'cancelled'); // caller talked over it
     expect(t.store.unheard()).toHaveLength(1);
     await t.done([t.said('You have one flagged chat. Mom says: call me')]);
+    expect(t.store.unheard()).toHaveLength(1); // generated, but the audio is still playing
+    t.wait(10_000);
+    await t.call.onEvent({ type: 'response.created' });
     expect(t.store.unheard()).toHaveLength(0);
     expect(t.store.usageSince(0)[0]).toMatchObject({ purpose: 'call', calls: 3, cost_usd: expect.any(Number) });
+  });
+
+  it('leaves a chat unheard if the line drops while its audio is still playing', async () => {
+    const t = setup(undefined, (s) => addMessage(s, MOM, { raw_text: 'call me' }));
+    await t.call.start();
+    await t.done([t.said('One flagged. Mom says: call me')]);
+    t.wait(500); // the caller hangs up half a second into it
+    t.call.closed();
+    expect(t.store.unheard()).toHaveLength(1);
   });
 
   it('interrupts with keypad notes and delivers them after the cancelled response', async () => {

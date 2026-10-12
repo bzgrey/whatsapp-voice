@@ -78,6 +78,11 @@ export class CallSession {
   private pos = 0;
   /** Handed to the model but not yet confirmed spoken; marked heard on confirmation. */
   private handed: number[] = [];
+  /** Confirmed spoken, but the audio may still be playing: heard once it has (`at`, ms). */
+  private playing: { ids: number[]; at: number }[] = [];
+  /** The adapter's audio clock (ms): now, and when everything said so far finishes playing. */
+  private nowMs = 0;
+  private audioEndsAt = 0;
   private briefingDone = false;
   private endedByCaller = false;
   private closed = false;
@@ -160,7 +165,7 @@ export class CallSession {
    * once enough of the pending part has been said, it counts as heard. With no
    * text (or force), confirms unconditionally.
    */
-  confirmSpoken(said?: string) {
+  confirmSpoken(said?: string, immediate = false) {
     if (said !== undefined && this.pending) {
       for (const w of contentWords(said)) this.spoken.add(w);
       if (coverage(this.pending.need, this.spoken) < SPOKEN_COVERAGE) return;
@@ -169,8 +174,28 @@ export class CallSession {
     this.spoken.clear();
     this.refusals = 0;
     if (!this.handed.length) return;
-    this.d.store.markHeard(this.handed, this.d.now());
+    // The model writes ahead of the audio: only count it heard once it has had time to play.
+    this.playing.push({ ids: this.handed, at: immediate ? 0 : this.audioEndsAt });
     this.handed = [];
+    this.settle();
+  }
+
+  /**
+   * The adapter's audio clock (ms): the current time, and when what's been said
+   * so far will have finished playing. Without one, heard marks are immediate.
+   */
+  setAudioClock(nowMs: number, audioEndsAt: number) {
+    this.nowMs = nowMs;
+    this.audioEndsAt = audioEndsAt;
+    this.settle();
+  }
+
+  /** Mark heard whatever has finished playing. */
+  private settle() {
+    const done = this.playing.filter((p) => p.at <= this.nowMs);
+    if (!done.length) return;
+    this.playing = this.playing.filter((p) => p.at > this.nowMs);
+    this.d.store.markHeard(done.flatMap((p) => p.ids), this.d.now());
   }
 
   /** Remember what must be said out loud before moving on (judged by its content words). */
@@ -195,7 +220,7 @@ export class CallSession {
     if (this.pending && !skip && this.refusals++ < MAX_REFUSALS) {
       return `Not yet: you haven't said the previous part out loud. Say it to the caller now, then call next_item (or call next_item with skipped: true if they asked to skip it):\n${this.pending.prompt}`;
     }
-    this.confirmSpoken();
+    this.confirmSpoken(undefined, skip);
     const out = await this.nextChunk();
     return out;
   }
@@ -498,6 +523,9 @@ export class CallSession {
   end() {
     if (this.closed) return;
     this.closed = true;
+    // Whatever was still playing when the line went dead wasn't heard.
+    this.settle();
+    this.playing = [];
     const dropped = this.state === 'active' && !this.endedByCaller && !this.briefingDone;
     this.d.store.endCall(this.callId, dropped ? 'dropped' : 'ended', this.d.now());
     this.state = 'ended';

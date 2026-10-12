@@ -71,10 +71,17 @@ export class RealtimeCall {
 
   /** The socket closed (hangup from either side, or a drop). */
   closed() {
+    this.syncClock();
     this.session.end();
   }
 
+  /** Tell the session when the audio said so far finishes, so heard marks wait for it. */
+  private syncClock() {
+    this.session.setAudioClock(this.io.now(), this.playoutUntil);
+  }
+
   private async handle(ev: RealtimeEvent) {
+    this.syncClock();
     switch (ev.type) {
       case 'response.created':
         this.responding = true;
@@ -109,12 +116,14 @@ export class RealtimeCall {
     const spoke = messages.length > 0;
     const transcripts = messages.flatMap((o) => o.content ?? []).map((c) => c.transcript).filter((t): t is string => typeof t === 'string');
 
-    // Spoken to the end (not cut off by the caller): tell the session what was said,
-    // so it counts as heard only once enough of the handed-out part was really spoken.
-    if (completed && spoke) this.session.confirmSpoken(transcripts.length ? transcripts.join(' ') : undefined);
     // Generation runs ahead of playback; keep a running estimate of when the audio ends.
     const spokenMs = (wordCount(transcripts.join(' ')) / WORDS_PER_SECOND) * 1000;
     this.playoutUntil = Math.max(this.io.now(), this.playoutUntil) + spokenMs;
+    this.syncClock();
+    // Spoken to the end (not cut off by the caller): tell the session what was said,
+    // so it counts as heard only once enough of the handed-out part was really spoken
+    // (and, via the clock, only once its audio has had time to play).
+    if (completed && spoke) this.session.confirmSpoken(transcripts.length ? transcripts.join(' ') : undefined);
 
     if (completed && spoke && this.hangupPending && !calls.length) {
       // response.done arrives when generation ends; let the audio finish playing first.
@@ -185,6 +194,7 @@ export class RealtimeCall {
     if (this.hungUp) return;
     this.hungUp = true;
     try { await this.io.hangup(); } catch (err) { log.warn(`call ${this.session.callId}: hangup failed: ${errMsg(err)}`); }
+    this.syncClock();
     this.session.end();
   }
 
