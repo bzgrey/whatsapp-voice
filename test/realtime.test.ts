@@ -28,33 +28,52 @@ function setup(caller = '0535551234', seed: (store: ReturnType<typeof makeStore>
   const done = (output: NonNullable<RealtimeEvent['response']>['output'], status = 'completed') =>
     call.onEvent({ type: 'response.done', response: { status, output, usage: { input_tokens: 100, output_tokens: 50, input_token_details: { audio_tokens: 80 }, output_token_details: { audio_tokens: 40 } } } });
   const said = (transcript = 'ok') => ({ type: 'message', content: [{ transcript }] });
+  /** response.create events that force the server's exact words. */
+  const scripted = () => sent.filter((e) => e.type === 'response.create' && e.response?.instructions);
+  /** A forced (scripted) response finishing, with what was actually said. */
+  const spoke = (transcript: string, then = 'continue', status = 'completed') =>
+    call.onEvent({ type: 'response.done', response: { status, metadata: { script: then }, output: [said(transcript)] } });
   const fn = (name: string, args = {}) => ({ type: 'function_call', name, call_id: `c_${name}`, arguments: JSON.stringify(args) });
-  return { store, config, sender, session, call, sent, timers, notes, outputs, done, said, fn, hungUp: () => hungUp, wait: (ms: number) => (clock += ms) };
+  return { store, config, sender, session, call, sent, timers, notes, outputs, done, said, fn, scripted, spoke, hungUp: () => hungUp, wait: (ms: number) => (clock += ms) };
 }
 
 describe('realtime adapter', () => {
-  it('speaks the opening, runs tool calls, and confirms heard only on a completed spoken response', async () => {
+  it('has the server speak each part word for word, and counts it heard only once said and played', async () => {
     const t = setup(undefined, (s) => addMessage(s, MOM, { raw_text: 'call me' }));
     await t.call.start();
-    expect(t.notes()[0]).toMatch(/1 flagged/);
-    expect(t.sent.at(-1)).toEqual({ type: 'response.create' });
+    const first = t.scripted()[0]!.response;
+    expect(first.instructions).toMatch(/1 flagged\..*call me/s);
+    expect(first).toMatchObject({ tool_choice: 'none', metadata: { script: 'continue' } });
 
-    expect(t.notes()[0]).toContain('call me');
-
-    // The first-call bug: the model chains next_item without speaking. Nothing is marked heard.
+    // The first-call bug: the model chains next_item without speaking. Nothing is marked heard,
+    // and the part is forced again.
     await t.call.onEvent({ type: 'response.created' });
     await t.done([t.fn('next_item')]);
-    expect(t.outputs()[0]).toMatch(/^Not yet/);
     expect(t.store.unheard()).toHaveLength(1);
+    expect(t.scripted()).toHaveLength(2);
+    expect(t.scripted()[1]!.response.instructions).toContain('call me');
 
-    await t.done([t.said('You have one flagged chat. Mom says: call me')], 'cancelled'); // caller talked over it
+    await t.spoke('1 flagged. Mom wrote: call me', 'continue', 'cancelled'); // caller talked over it
     expect(t.store.unheard()).toHaveLength(1);
-    await t.done([t.said('You have one flagged chat. Mom says: call me')]);
-    expect(t.store.unheard()).toHaveLength(1); // generated, but the audio is still playing
+    expect(t.scripted()).toHaveLength(2); // no auto-advance after an interruption
+
+    await t.spoke('1 flagged. Mom wrote: "call me"');
+    expect(t.store.unheard()).toHaveLength(1); // said, but the audio is still playing
+    // The server carried on by itself: the end of the briefing, which then waits.
+    expect(t.scripted()[2]!.response).toMatchObject({ metadata: { script: 'wait' } });
+    expect(t.scripted()[2]!.response.instructions).toContain("That's everything.");
     t.wait(10_000);
     await t.call.onEvent({ type: 'response.created' });
     expect(t.store.unheard()).toHaveLength(0);
-    expect(t.store.usageSince(0)[0]).toMatchObject({ purpose: 'call', calls: 3, cost_usd: expect.any(Number) });
+    expect(t.store.usageSince(0)[0]).toMatchObject({ purpose: 'call', calls: 1, cost_usd: expect.any(Number) });
+  });
+
+  it('moves on without marking heard when the part never gets said', async () => {
+    const t = setup(undefined, (s) => addMessage(s, MOM, { raw_text: 'are you coming home for Sukkos' }));
+    await t.call.start();
+    for (let i = 0; i < 3; i++) await t.spoke('Okay, let me read those flagged messages carefully.');
+    expect(t.scripted().at(-1)!.response.instructions).toContain("That's everything.");
+    expect(t.store.unheard()).toHaveLength(1);
   });
 
   it('leaves a chat unheard if the line drops while its audio is still playing', async () => {
@@ -108,13 +127,13 @@ describe('realtime adapter', () => {
     t.config.applyVoice({ jid: YOSSI, aliases: [], isGroup: false, names: ['Yossi Cohen'], label: 'Yossi Cohen', lastActivity: null }, 'flag');
     await t.call.start(); // counts + first flagged chat, no pause
     const said = 'One two three four five six seven eight nine ten'; // 10 words = 4 s of audio
-    await t.done([t.said(`Mom: are you coming home for Sukkos. ${said}`), t.fn('next_item')]);
-    const sentBefore = t.outputs().length;
+    await t.spoke(`2 flagged. Mom wrote: are you coming home for Sukkos. ${said}`);
+    const before = t.scripted().length;
     expect(t.timers.at(-1)!.ms).toBeGreaterThanOrEqual(750 + 4000);
-    expect(t.outputs().length).toBe(sentBefore); // held back
+    expect(t.scripted().length).toBe(before); // held back
     await t.call.onEvent({ type: 'input_audio_buffer.dtmf_event_received', event: '3' }); // not lost while waiting
     t.timers.at(-1)!.fn();
-    expect(t.outputs().at(-1)).toContain('can I borrow the sefer');
+    expect(t.scripted().at(-1)!.response.instructions).toContain('can I borrow the sefer');
     expect(t.notes().at(-1)).toMatch(/pressed 3/);
   });
 

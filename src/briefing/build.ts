@@ -187,6 +187,29 @@ export function itemPrompt(item: Item): string {
   }
 }
 
+/**
+ * The exact words for an item, for the server to have spoken word for word
+ * (the model only voices them). Senders are named in the lines themselves.
+ */
+export function itemScript(item: Item): string {
+  const plus = (trivial: string) => (trivial ? ` Plus ${trivial}.` : '');
+  switch (item.kind) {
+    case 'urgent':
+      return `Urgent${item.isGroup ? `, in ${item.name}` : ''}. ${item.lines.join(' ')}`;
+    case 'flagged': {
+      if (!item.count) return `${item.name}: just ${item.trivial}.`;
+      if (item.mode === 'ask') {
+        const mins = Math.max(1, Math.round(item.seconds / 60));
+        return `${item.name} has ${item.count} messages, about ${mins} minute${mins === 1 ? '' : 's'}. Read them all or summarize?`;
+      }
+      const intro = item.mode === 'summary_then_read' && item.summary ? `${item.name}: ${item.summary}. ` : item.isGroup ? `In ${item.name}: ` : '';
+      return `${intro}${item.lines.join(' ')}${plus(item.trivial)}`;
+    }
+    case 'rollcall':
+      return item.entries.map((e) => `${e.name}, ${e.line}.`).join(' ');
+  }
+}
+
 /** The words the model is expected to say out loud for an item. */
 export function itemSpeakable(item: Item): string {
   if (item.kind === 'rollcall') return item.entries.map((e) => `${e.name}, ${e.line}`).join(' ');

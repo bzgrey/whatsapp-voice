@@ -10,7 +10,7 @@ import { buildDirectory, resolveSpokenWithFallback, type Entry } from '../config
 import { chatContext, narrationFor, refreshSummaryLine, senderNamer } from '../ingest/summaries.ts';
 import { getWaStatus } from '../whatsapp/status.ts';
 import {
-  buildBriefing, countsSentence, gatherUnheard, itemChat, itemMessageIds, itemPrompt, itemSpeakable, type Item,
+  buildBriefing, countsSentence, gatherUnheard, itemChat, itemMessageIds, itemPrompt, itemScript, itemSpeakable, type Item,
 } from './build.ts';
 import { messageContent, renderMessages, sincePhrase } from './render.ts';
 
@@ -28,8 +28,19 @@ export interface SessionDeps {
 }
 
 /** What the engine adapter passes back to the model. `hangup`: end the call once this is spoken. */
+/**
+ * Exact words the server wants spoken (a briefing part), and whether the
+ * briefing then carries on by itself or waits for the caller.
+ */
+export interface Script {
+  text: string;
+  then: 'continue' | 'wait';
+}
+
 export interface Output {
   output: string;
+  /** Speak exactly this (the adapter forces it), instead of trusting the model to read `output`. */
+  script?: Script;
   /** Leave this much silence after the previous part finishes playing before saying this one. */
   pauseMs?: number;
   hangup?: boolean;
@@ -94,7 +105,9 @@ export class CallSession {
    * The last thing handed out that the model must say out loud before the
    * briefing moves on, and how many of its words have been spoken so far.
    */
-  private pending: { prompt: string; need: Set<string> } | null = null;
+  private pending: { prompt: string; need: Set<string>; script: Script | null } | null = null;
+  /** The script for the output being built (taken by whoever returns it). */
+  private script: Script | null = null;
   private spoken = new Set<string>();
   /** Times next_item was refused for the current part (we give up insisting after a couple). */
   private refusals = 0;
@@ -125,7 +138,8 @@ export class CallSession {
       return { output: 'The caller is not verified yet. Say only: "Please enter your PIN on the keypad." Reveal nothing else and call no tools until the PIN is accepted.' };
     }
     if (this.state === 'ended') return { output: 'Say only: "Sorry, this line is private." Then stop.', hangup: true };
-    return { output: `The call just connected. Start immediately with the following; no greeting.\n${await this.advance()}` };
+    const output = `The call just connected. Start immediately with the following; no greeting.\n${await this.advance()}`;
+    return { output, script: this.takeScript() };
   }
 
   // ---------- briefing ----------
@@ -198,10 +212,18 @@ export class CallSession {
     this.d.store.markHeard(done.flatMap((p) => p.ids), this.d.now());
   }
 
+  /** The script for the output just built, if any (once). */
+  private takeScript(): Script | undefined {
+    const s = this.script;
+    this.script = null;
+    return s ?? undefined;
+  }
+
   /** Remember what must be said out loud before moving on (judged by its content words). */
-  private expect(prompt: string, speakable: string) {
+  private expect(prompt: string, speakable: string, script: Script | null = null) {
     const need = contentWords(speakable);
-    this.pending = need.size ? { prompt, need } : null;
+    this.script = script;
+    this.pending = need.size ? { prompt, need, script } : null;
     this.spoken.clear();
     this.refusals = 0;
   }
@@ -218,7 +240,14 @@ export class CallSession {
    */
   private async advance(skip = false): Promise<string> {
     if (this.pending && !skip && this.refusals++ < MAX_REFUSALS) {
+      this.script = this.pending.script;
       return `Not yet: you haven't said the previous part out loud. Say it to the caller now, then call next_item (or call next_item with skipped: true if they asked to skip it):\n${this.pending.prompt}`;
+    }
+    if (this.pending && !skip) {
+      // It still wasn't said: move on, but it isn't heard. The next call includes it.
+      log.warn(`call ${this.callId}: part not spoken after ${MAX_REFUSALS} retries; left unheard`);
+      this.handed = [];
+      this.pending = null;
     }
     this.confirmSpoken(undefined, skip);
     const out = await this.nextChunk();
@@ -230,9 +259,9 @@ export class CallSession {
     const out: string[] = [];
     const said: string[] = [];
     // What must be heard is the item itself; the greeting before it doesn't count towards it.
-    const done = (speakable: string) => {
+    const done = (speakable: string, script?: Script) => {
       const prompt = out.join('\n');
-      this.expect(prompt, speakable || said.join(' '));
+      this.expect(prompt, speakable || said.join(' '), script ?? null);
       return prompt;
     };
     while (this.pos < this.steps.length) {
@@ -243,7 +272,7 @@ export class CallSession {
         if (out.length && !this.summariesSettled) {
           this.pos--;
           out.push('Say that out loud now. Then call next_item to begin the briefing.');
-          return done('');
+          return done('', { text: said.join(' '), then: 'continue' });
         }
         await this.summariesReady;
         const { items } = buildBriefing(gatherUnheard(store), store);
@@ -255,7 +284,7 @@ export class CallSession {
         this.activeDraft = step.draft;
         const line = `You had an unsent message to ${displayName(store, step.draft.chat_jid)}: '${step.draft.text}'. Press 1 to send, or 9 to discard.`;
         out.push(`Say: "${line}" Wait for the keypad. If they'd rather carry on, call next_item; the draft stays saved.`);
-        return done(line);
+        return done(line, { text: [...said, line].join(' '), then: 'wait' });
       }
       const item = this.stillRelevant(step.item);
       if (!item) continue;
@@ -267,8 +296,9 @@ export class CallSession {
       this.lastItemKind = item.kind;
       store.updateCall(this.callId, { current_chat: item.kind === 'rollcall' ? item.entries[0]!.jid : item.jid, in_briefing: true });
       out.push(itemPrompt(item));
-      out.push(item.kind === 'flagged' && item.mode === 'ask' ? 'After reading or summarizing it, call next_item.' : NEXT);
-      return done(itemSpeakable(item));
+      const ask = item.kind === 'flagged' && item.mode === 'ask';
+      out.push(ask ? 'After reading or summarizing it, call next_item.' : NEXT);
+      return done(itemSpeakable(item), { text: [...said, itemScript(item)].join(' '), then: ask ? 'wait' : 'continue' });
     }
     if (!this.briefingDone) {
       this.briefingDone = true;
@@ -279,9 +309,10 @@ export class CallSession {
       out.push('The briefing is already finished. Say "That\'s everything." if you haven\'t, then wait for him.');
     }
     const prompt = out.join('\n');
+    const script: Script | null = said.length ? { text: said.join(' '), then: 'wait' } : null;
     // Only statements (e.g. the greeting) still need saying before anything else is handed out.
-    if (said.length) this.expect(prompt, said.join(' '));
-    else this.pending = null;
+    if (said.length) this.expect(prompt, said.join(' '), script);
+    else { this.pending = null; this.script = null; }
     return prompt;
   }
 
@@ -305,7 +336,7 @@ export class CallSession {
         case 'next_item': {
           this.nextPause = 0;
           const output = await this.advance(!!args.skipped);
-          return { output, pauseMs: this.nextPause || undefined };
+          return { output, pauseMs: this.nextPause || undefined, script: this.takeScript() };
         }
         case 'skip_briefing': return { output: this.skipBriefing() };
         case 'read_chat': return { output: await this.readChat(args.chat) };
@@ -462,7 +493,7 @@ export class CallSession {
       case '1': return { output: await this.send() };
       case '2':
         if (this.briefingDone) return { output: 'The caller pressed 2 (next), but the briefing is finished. Say so briefly.' };
-        return { output: `The caller pressed 2: skip to the next chat. Stop the current one.\n${await this.advance(true)}` };
+        return { output: `The caller pressed 2: skip to the next chat. Stop the current one.\n${await this.advance(true)}`, script: this.takeScript() };
       case '3': return { output: 'The caller pressed 3: repeat the last thing you said, word for word.' };
       case '9':
         return { output: this.activeDraft ? this.cancelDraft() : 'The caller pressed 9 (cancel), but nothing is pending. Ignore it unless they ask.' };
@@ -483,7 +514,9 @@ export class CallSession {
     if (ok) {
       log.info(`call ${this.callId}: PIN accepted`);
       this.begin();
-      return { output: `PIN accepted.\n${await this.advance()}` };
+      const output = `PIN accepted.\n${await this.advance()}`;
+      const script = this.takeScript();
+      return { output, script: script && { ...script, text: `PIN accepted. ${script.text}` } };
     }
     this.pinTries++;
     log.warn(`call ${this.callId}: wrong PIN (${this.pinTries}/${PIN_TRIES})`);

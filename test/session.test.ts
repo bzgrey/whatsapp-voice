@@ -117,7 +117,7 @@ describe('briefing flow', () => {
     expect((await s.tool('next_item', {})).output).toContain('Roll call');
   });
 
-  it('stops insisting after two refusals rather than looping', async () => {
+  it('stops insisting after two refusals rather than looping, leaving the part unheard', async () => {
     const { store, call } = setup();
     addMessage(store, MOM, { raw_text: 'שלום, מתי אתה בא הביתה?' });
     const s = call();
@@ -126,6 +126,7 @@ describe('briefing flow', () => {
     expect((await s.tool('next_item', {})).output).toMatch(/^Not yet/);
     expect((await s.tool('next_item', {})).output).toMatch(/^Not yet/);
     expect((await s.tool('next_item', {})).output).toMatch(/Briefing finished/);
+    expect(store.unheard()).toHaveLength(1); // the next call reads it
   });
 
   it('starts fresh after a drop, with whatever was not heard', async () => {

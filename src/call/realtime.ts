@@ -1,4 +1,4 @@
-import type { CallSession, Output } from '../briefing/session.ts';
+import type { CallSession, Output, Script } from '../briefing/session.ts';
 import type { Store } from '../db/store.ts';
 import { errMsg, log } from '../log.ts';
 import { tokenCost } from '../llm/prices.ts';
@@ -12,6 +12,7 @@ export interface RealtimeEvent {
   error?: unknown;
   response?: {
     status?: string;
+    metadata?: Record<string, string> | null;
     output?: { type: string; name?: string; call_id?: string; arguments?: string; content?: { transcript?: string }[] }[];
     usage?: {
       input_tokens?: number;
@@ -41,7 +42,7 @@ export interface CallIO {
 export class RealtimeCall {
   private responding = false;
   private cancelSent = false;
-  private notes: string[] = [];
+  private notes: { text: string; script?: Script }[] = [];
   private hangupPending = false;
   private hungUp = false;
   private queue: Promise<void> = Promise.resolve();
@@ -111,6 +112,8 @@ export class RealtimeCall {
     const r = ev.response ?? {};
     this.logUsage(r.usage);
     const completed = r.status === 'completed';
+    /** A briefing part the server had spoken word for word; 'continue' means go straight on to the next. */
+    const scripted = r.metadata?.script;
     const calls = completed ? (r.output ?? []).filter((o) => o.type === 'function_call') : [];
     const messages = (r.output ?? []).filter((o) => o.type === 'message');
     const spoke = messages.length > 0;
@@ -133,6 +136,14 @@ export class RealtimeCall {
 
     const outputs: object[] = [];
     let pauseMs = 0;
+    let script: Script | undefined;
+    if (completed && scripted === 'continue' && !calls.length) {
+      // The server drives the briefing: once a part has been said, hand out the next one itself.
+      const out = await this.session.tool('next_item', {});
+      log.info(`call ${this.session.callId}: next part${out.output.startsWith('Not yet') ? ' (repeat: not spoken yet)' : ''}`);
+      if (out.hangup) this.armHangup();
+      return this.schedule([], out.script, out.pauseMs ?? 0, out.script ? undefined : out.output);
+    }
     for (const c of calls) {
       let args: Record<string, unknown> = {};
       try { args = JSON.parse(c.arguments || '{}'); } catch { /* model sent bad JSON; tool gets no args */ }
@@ -141,22 +152,33 @@ export class RealtimeCall {
       log.info(`call ${this.session.callId}: tool ${c.name}${out.output.startsWith('Not yet') ? ' (refused: not spoken yet)' : ''}`);
       if (out.hangup) this.armHangup();
       pauseMs = Math.max(pauseMs, out.pauseMs ?? 0);
-      outputs.push({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: c.call_id, output: out.output } });
+      if (out.script) script = out.script;
+      const output = noteFor(out);
+      outputs.push({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: c.call_id, output } });
     }
-    if (pauseMs && outputs.length) {
-      // Hold the next part until the current one has played, plus the pause.
-      this.waiting = true;
-      this.io.later(() => { this.waiting = false; this.flush(outputs); }, Math.max(0, this.playoutUntil - this.io.now()) + pauseMs);
-      return;
-    }
-    this.flush(outputs);
+    this.schedule(outputs, script, pauseMs);
   }
 
-  private flush(outputs: object[]) {
+  /** Send these (and any queued notes) and start the next response, after a pause if asked. */
+  private schedule(outputs: object[], script: Script | undefined, pauseMs: number, note?: string) {
+    if (note) this.notes.push({ text: note });
+    if (pauseMs && (outputs.length || script)) {
+      // Hold the next part until the current one has played, plus the pause.
+      this.waiting = true;
+      this.io.later(() => { this.waiting = false; this.flush(outputs, script); }, Math.max(0, this.playoutUntil - this.io.now()) + pauseMs);
+      return;
+    }
+    this.flush(outputs, script);
+  }
+
+  private flush(outputs: object[], script?: Script) {
     for (const o of outputs) this.io.send(o);
     const notes = this.notes.splice(0);
-    for (const note of notes) this.io.send(noteItem(note));
-    if (outputs.length || notes.length) this.createResponse();
+    for (const note of notes) {
+      this.io.send(noteItem(note.text));
+      if (note.script) script = note.script;
+    }
+    if (outputs.length || notes.length || script) this.createResponse(script);
   }
 
   /**
@@ -165,17 +187,18 @@ export class RealtimeCall {
    */
   private deliver(out: Output, interrupt = false) {
     if (out.hangup) this.armHangup();
-    if (this.waiting) { this.notes.push(out.output); return; }
+    const note = { text: noteFor(out), script: out.script };
+    if (this.waiting) { this.notes.push(note); return; }
     if (this.responding) {
-      this.notes.push(out.output);
+      this.notes.push(note);
       if (interrupt && !this.cancelSent) {
         this.cancelSent = true;
         this.io.send({ type: 'response.cancel' });
       }
       return;
     }
-    this.io.send(noteItem(out.output));
-    this.createResponse();
+    this.io.send(noteItem(note.text));
+    this.createResponse(out.script);
   }
 
   /** Hang up after the goodbye is spoken, or after 15 s whatever happens. */
@@ -185,9 +208,12 @@ export class RealtimeCall {
     this.io.later(() => void this.hangup(), 15_000);
   }
 
-  private createResponse() {
+  /** Start a response; with a script, one that can only say those exact words. */
+  private createResponse(script?: Script) {
     this.responding = true;
-    this.io.send({ type: 'response.create' });
+    this.io.send(script
+      ? { type: 'response.create', response: { instructions: scriptInstructions(script.text), tool_choice: 'none', metadata: { script: script.then } } }
+      : { type: 'response.create' });
   }
 
   private async hangup() {
@@ -212,6 +238,20 @@ export class RealtimeCall {
 }
 
 /** Server notes go in as bracketed user messages (what the phase 3 test proved works). */
+/** What the model is told when the server speaks a briefing part through it. */
+const SCRIPTED_NOTE = 'The server is reading the next part of the briefing to the caller and carries on by itself. '
+  + "Don't call next_item for it. If he interrupts, answer him; call next_item only if he then wants the briefing to go on.";
+
+/** What the model is told about an output: a part that waits for him keeps its instructions for what comes next. */
+const noteFor = (out: Output) => !out.script ? out.output
+  : out.script.then === 'continue' ? SCRIPTED_NOTE
+  : `The server has just said this to the caller through you; don't say it again. Its instructions, for what to do next:\n${out.output}`;
+
+/** Per-response instructions that make the model voice the server's exact words. */
+export const scriptInstructions = (text: string) => `You are reading WhatsApp messages aloud on a phone call. Say exactly the text below, word for word, and nothing else: no introduction, no comment, no question or offer afterwards. Read quoted text in its original language (Hebrew, Yiddish, English…) without translating. Speak clearly, with a short pause between messages.
+
+${text}`;
+
 const noteItem = (text: string) => ({
   type: 'conversation.item.create',
   item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `[Server: ${text}]` }] },
