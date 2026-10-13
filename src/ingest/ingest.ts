@@ -85,10 +85,20 @@ export class Ingest {
       if (!target) return null;
       if (ex.protocol.kind === 'revoke') this.store.deleteMessage(chatJid, target.id);
       else {
-        this.store.updateMessage(target.rowid, { raw_text: ex.protocol.text ?? null });
-        if (!target.from_me) this.queueClassify(target.rowid, now);
+        const text = ex.protocol.text ?? null;
+        if (target.from_me) this.store.updateMessage(target.rowid, { raw_text: text });
+        else {
+          // Judge the new text afresh: a quick "ok" edited into a real message must not stay trivial.
+          const autoTrivial = target.type === 'text' && !target.media_desc && obviouslyTrivial(text ?? '');
+          this.store.updateMessage(target.rowid, { raw_text: text, is_urgent: autoTrivial ? 0 : null, is_trivial: autoTrivial ? 1 : null });
+          if (!autoTrivial) this.queueClassify(target.rowid, now);
+        }
       }
-      if (!target.from_me) this.store.enqueue('summarize', chatJid, now + SUMMARY_DEBOUNCE_SECONDS, now, true);
+      if (!target.from_me) {
+        // The chat's one-liner was written from the old text; the rowid didn't change, so mark it stale explicitly.
+        this.store.setSummary(chatJid, null, null);
+        this.store.enqueue('summarize', chatJid, now + SUMMARY_DEBOUNCE_SECONDS, now, true);
+      }
       return null;
     }
 

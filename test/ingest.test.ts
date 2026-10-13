@@ -83,6 +83,19 @@ describe('ingest', () => {
     expect(store.findMessage(YOSSI, 'X')).toBeUndefined();
   });
 
+  it('re-judges an edited message and drops the one-liner written from the old text', () => {
+    const { store, feed } = setup();
+    feed({ key: { remoteJid: YOSSI, id: 'E' }, message: { conversation: 'ok' } });
+    expect(store.findMessage(YOSSI, 'E')!.is_trivial).toBe(1);
+    store.setSummary(YOSSI, 'said ok', store.findMessage(YOSSI, 'E')!.rowid);
+    feed({ key: { remoteJid: YOSSI }, message: { protocolMessage: { type: 14, key: { id: 'E' }, editedMessage: { conversation: 'ok so here is the whole plan for Sunday' } } } });
+    const m = store.findMessage(YOSSI, 'E')!;
+    expect(m.raw_text).toBe('ok so here is the whole plan for Sunday');
+    expect(m.is_trivial).toBeNull();
+    expect(store.getChat(YOSSI)!.summary_upto).toBeNull();
+    expect((store.db.prepare("SELECT COUNT(*) n FROM jobs WHERE kind = 'classify' AND ref = ?").get(String(m.rowid)) as { n: number }).n).toBe(1);
+  });
+
   it('merges a LID chat into the phone JID once the mapping is known', () => {
     const { store, feed, ingest } = setup();
     feed({ key: { remoteJid: '777@lid' }, message: { conversation: 'hi from lid' } });
