@@ -1,6 +1,6 @@
 import type { DB } from './index.ts';
 import type {
-  CallRow, ChatRow, ContactRow, DraftRow, JobKind, JobRow, MessageRow, NewMessage, Tier, UsageEntry,
+  CallRow, ChatRow, ContactRow, DraftRow, JobKind, JobRow, MessageRow, NewMessage, SpokenPart, Tier, UsageEntry,
 } from './types.ts';
 
 /** All queries live here. Times are unix seconds. */
@@ -165,7 +165,11 @@ export class Store {
   }
 
   deleteMessage(chatJid: string, id: string) {
-    this.db.prepare('DELETE FROM messages WHERE chat_jid = ? AND id = ?').run(chatJid, id);
+    const row = this.findMessage(chatJid, id);
+    if (!row) return;
+    this.db.prepare('DELETE FROM messages WHERE rowid = ?').run(row.rowid);
+    // A deleted message shouldn't be repeated from an old briefing either.
+    this.db.prepare('DELETE FROM spoken_parts WHERE EXISTS (SELECT 1 FROM json_each(spoken_parts.message_ids) WHERE value = ?)').run(row.rowid);
   }
 
   /** Unheard incoming messages, oldest first. */
@@ -378,6 +382,32 @@ export class Store {
     this.db.prepare("UPDATE calls SET status = ?, ended_at = ? WHERE id = ? AND status = 'active'").run(status, now, id);
   }
 
+  // ---------- what calls read out ----------
+
+  logSpoken(parts: Omit<SpokenPart, 'created_at'>[], now: number) {
+    const stmt = this.db.prepare(`
+      INSERT INTO spoken_parts (call_id, part, chat_jid, kind, text, message_ids, created_at)
+      VALUES (@call_id, @part, @chat_jid, @kind, @text, @message_ids, @now)
+    `);
+    this.db.transaction(() => parts.forEach((p) => stmt.run({ ...p, message_ids: JSON.stringify(p.message_ids), now })))();
+  }
+
+  /** What a call read out, in order; only one chat's parts if `jid` is given. */
+  spokenParts(callId: number, jid?: string): SpokenPart[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM spoken_parts WHERE call_id = ? ${jid ? 'AND chat_jid = ?' : ''} ORDER BY part, id
+    `).all(...(jid ? [callId, jid] : [callId])) as (Omit<SpokenPart, 'message_ids'> & { message_ids: string })[];
+    return rows.map((r) => ({ ...r, message_ids: JSON.parse(r.message_ids) as number[] }));
+  }
+
+  /** The most recent call before `callId` that read anything out (about `jid`, if given). */
+  previousSpokenCall(callId: number, jid?: string): number | null {
+    const row = this.db.prepare(`
+      SELECT MAX(call_id) AS id FROM spoken_parts WHERE call_id < ? ${jid ? 'AND chat_jid = ?' : ''}
+    `).get(...(jid ? [callId, jid] : [callId])) as { id: number | null };
+    return row.id;
+  }
+
   // ---------- usage ----------
 
   logUsage(u: UsageEntry, now: number) {
@@ -419,6 +449,11 @@ export class Store {
         WHERE summary IS NOT NULL AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.chat_jid = chats.jid)
       `).run();
       this.db.prepare('DELETE FROM drafts WHERE updated_at < ?').run(cutoff);
+      // Repeatable briefing text goes with the messages it quoted.
+      this.db.prepare(`
+        DELETE FROM spoken_parts WHERE created_at < ?
+          OR EXISTS (SELECT 1 FROM json_each(spoken_parts.message_ids) j WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.rowid = j.value))
+      `).run(cutoff);
       this.db.prepare("DELETE FROM jobs WHERE status IN ('done', 'failed') AND created_at < ?").run(cutoff);
       const legacy = this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'legacy_messages'").get();
       if (legacy) {

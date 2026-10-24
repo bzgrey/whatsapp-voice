@@ -139,6 +139,8 @@ If the call drops before I confirm, the draft is saved and offered at the start 
 ### 6.2 Conversation style
 After the automatic briefing, it's free conversation. No menus. Voice commands include: next / skip, repeat, more, read it, translate, reply, send to…, flag / unflag / mute / unmute, what did X say…, goodbye.
 
+**Repeating.** Everything read out (briefing parts, chats read or summarized on request) is kept word for word, so it can be said again exactly, never paraphrased from the model's memory: the last part ("repeat that", keypad 3), one chat's part ("what did Yossi say again?"), or the whole briefing. This covers the current call and earlier ones ("what was in my last briefing?"); a chat's part comes from the most recent call that read it. A repeat in the middle of the briefing puts the interrupted part back and carries on afterwards. The kept text is deleted with the messages it quotes (§10.8).
+
 ### 6.3 Keypad shortcuts (DTMF)
 Voice always works; the keypad is a fallback for noisy rooms and misrecognition.
 
@@ -146,7 +148,7 @@ Voice always works; the keypad is a fallback for noisy rooms and misrecognition.
 | --- | --- |
 | 1 | Confirm / send |
 | 2 | Next chat |
-| 3 | Repeat |
+| 3 | Repeat the last part, word for word |
 | 9 | Cancel |
 | # | Skip the rest of the automatic briefing |
 
@@ -272,7 +274,7 @@ Voice always works; the keypad is a fallback for noisy rooms and misrecognition.
   - Run before switching any model.
 
 ### 10.8 Operations
-- **Retention:** a purge (hourly or nightly) deletes **all messages older than 4 days**, heard or not, along with their transcripts, descriptions, and any chat summary built only from them. Chat/contact metadata and config are kept. My phone remains the full record.
+- **Retention:** a purge (hourly or nightly) deletes **all messages older than 4 days**, heard or not, along with their transcripts, descriptions, any chat summary built only from them, and any kept briefing text (§6.2) that quotes them. Chat/contact metadata and config are kept. My phone remains the full record.
 - **Read status:** never mark anything read on WhatsApp (§3.7).
 - **Logging:** metadata only (chat names, counts, errors, costs), never message text.
 - **Costs:** every API call logs tokens/minutes and estimated cost to a `usage` table; `scripts/costs` (or `/costs`) shows month-to-date. Target ~$12/month. Separately, set a **hard OpenAI project spending limit of ~$20–30/month** as a backstop.

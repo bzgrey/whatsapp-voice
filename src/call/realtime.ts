@@ -42,7 +42,10 @@ export interface CallIO {
 export class RealtimeCall {
   private responding = false;
   private cancelSent = false;
-  private notes: { text: string; script?: Script }[] = [];
+  /** Queued for the next response: a note for the model, and/or a part to speak. */
+  private notes: { text?: string; script?: Script }[] = [];
+  /** The caller is talking (server VAD); a held-back part waits for his turn to finish. */
+  private userSpeaking = false;
   private hangupPending = false;
   private hungUp = false;
   private queue: Promise<void> = Promise.resolve();
@@ -89,9 +92,20 @@ export class RealtimeCall {
         return;
       case 'response.done':
         return this.responseDone(ev);
+      case 'input_audio_buffer.speech_started':
+        this.userSpeaking = true;
+        return;
+      case 'input_audio_buffer.speech_stopped':
+        this.userSpeaking = false;
+        // Normally VAD now starts a response, and anything held back goes after it. If none starts, send it anyway.
+        this.io.later(() => {
+          if (!this.responding && !this.userSpeaking && !this.waiting && this.notes.length) this.flush([]);
+        }, 1500);
+        return;
       case 'input_audio_buffer.dtmf_event_received': {
-        const out = await this.session.dtmf(String(ev.event ?? ''));
-        if (out) this.deliver({ ...out, output: `Keypad: ${out.output}` }, true);
+        const digit = String(ev.event ?? '');
+        const out = await this.session.dtmf(digit);
+        if (out) this.deliver(out, true, `Keypad ${digit}`);
         return;
       }
       case 'conversation.item.input_audio_transcription.completed':
@@ -112,6 +126,7 @@ export class RealtimeCall {
     const r = ev.response ?? {};
     this.logUsage(r.usage);
     const completed = r.status === 'completed';
+    if (r.status === 'cancelled') this.session.interrupted();
     /** A briefing part the server had spoken word for word; 'continue' means go straight on to the next. */
     const scripted = r.metadata?.script;
     const calls = completed ? (r.output ?? []).filter((o) => o.type === 'function_call') : [];
@@ -142,7 +157,8 @@ export class RealtimeCall {
       const out = await this.session.tool('next_item', {});
       log.info(`call ${this.session.callId}: next part${out.output.startsWith('Not yet') ? ' (repeat: not spoken yet)' : ''}`);
       if (out.hangup) this.armHangup();
-      return this.schedule([], out.script, out.pauseMs ?? 0, out.script ? undefined : out.output);
+      // A part that carries on needs no note; one that waits for him brings its instructions for what comes after.
+      return this.schedule([], out.script, out.pauseMs ?? 0, out.script?.then === 'continue' ? undefined : noteFor(out));
     }
     for (const c of calls) {
       let args: Record<string, unknown> = {};
@@ -165,29 +181,41 @@ export class RealtimeCall {
     if (pauseMs && (outputs.length || script)) {
       // Hold the next part until the current one has played, plus the pause.
       this.waiting = true;
-      this.io.later(() => { this.waiting = false; this.flush(outputs, script); }, Math.max(0, this.playoutUntil - this.io.now()) + pauseMs);
+      // Keypad notes that arrive meanwhile are newer than this part, so theirs wins.
+      this.io.later(() => { this.waiting = false; this.flush(outputs, script, true); }, Math.max(0, this.playoutUntil - this.io.now()) + pauseMs);
       return;
     }
     this.flush(outputs, script);
   }
 
-  private flush(outputs: object[], script?: Script) {
+  /**
+   * Send outputs and queued notes, then start a response. `notesWin`: a part
+   * queued in the notes replaces `script` (it's newer); otherwise `script` wins.
+   */
+  private flush(outputs: object[], script?: Script, notesWin = false) {
     for (const o of outputs) this.io.send(o);
-    const notes = this.notes.splice(0);
-    for (const note of notes) {
-      this.io.send(noteItem(note.text));
-      if (note.script) script = note.script;
+    if (this.responding || this.userSpeaking) {
+      // He started talking during the pause: OpenAI would refuse a second response. Go after his turn.
+      if (script) this.notes.push({ script });
+      return;
     }
-    if (outputs.length || notes.length || script) this.createResponse(script);
+    const notes = this.notes.splice(0);
+    let queued: Script | undefined;
+    for (const note of notes) {
+      if (note.text) this.io.send(noteItem(note.text));
+      if (note.script) queued = note.script;
+    }
+    const next = notesWin ? queued ?? script : script ?? queued;
+    if (outputs.length || notes.length || next) this.createResponse(next);
   }
 
   /**
    * Give the model a server note. Keypad notes interrupt whatever it's saying;
    * others wait for the current response to end.
    */
-  private deliver(out: Output, interrupt = false) {
+  private deliver(out: Output, interrupt = false, prefix?: string) {
     if (out.hangup) this.armHangup();
-    const note = { text: noteFor(out), script: out.script };
+    const note = { text: `${prefix ? `${prefix}. ` : ''}${noteFor(out)}`, script: out.script };
     if (this.waiting) { this.notes.push(note); return; }
     if (this.responding) {
       this.notes.push(note);
@@ -242,10 +270,13 @@ export class RealtimeCall {
 const SCRIPTED_NOTE = 'The server is reading the next part of the briefing to the caller and carries on by itself. '
   + "Don't call next_item for it. If he interrupts, answer him; call next_item only if he then wants the briefing to go on.";
 
-/** What the model is told about an output: a part that waits for him keeps its instructions for what comes next. */
+/**
+ * What the model is told about an output. The note goes in just before the
+ * forced response, so it speaks of the part as about to be said.
+ */
 const noteFor = (out: Output) => !out.script ? out.output
   : out.script.then === 'continue' ? SCRIPTED_NOTE
-  : `The server has just said this to the caller through you; don't say it again. Its instructions, for what to do next:\n${out.output}`;
+  : `The server is now saying the next part to the caller through you, word for word. Once it has been said, don't say it again. Then: ${out.script.after ?? 'wait for him.'}`;
 
 /** Per-response instructions that make the model voice the server's exact words. */
 export const scriptInstructions = (text: string) => `You are reading WhatsApp messages aloud on a phone call. Say exactly the text below, word for word, and nothing else: no introduction, no comment, no question or offer afterwards. Read quoted text in its original language (Hebrew, Yiddish, English…) without translating. Speak clearly, with a short pause between messages.

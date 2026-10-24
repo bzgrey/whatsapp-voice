@@ -89,12 +89,60 @@ describe('realtime adapter', () => {
     const t = setup();
     await t.call.start();
     await t.call.onEvent({ type: 'response.created' });
-    await t.call.onEvent({ type: 'input_audio_buffer.dtmf_event_received', event: '3' });
+    await t.call.onEvent({ type: 'input_audio_buffer.dtmf_event_received', event: '9' });
     expect(t.sent.at(-1)).toEqual({ type: 'response.cancel' });
     const before = t.notes().length;
     await t.done([], 'cancelled');
-    expect(t.notes().slice(before)).toEqual([expect.stringMatching(/Keypad: The caller pressed 3/)]);
+    expect(t.notes().slice(before)).toEqual([expect.stringMatching(/Keypad 9\. The caller pressed 9/)]);
     expect(t.sent.at(-1)).toEqual({ type: 'response.create' });
+  });
+
+  it('keypad 3 has the server say the cut-off part again, word for word', async () => {
+    const t = setup(undefined, (s) => addMessage(s, MOM, { raw_text: 'call me' }));
+    await t.call.start();
+    await t.call.onEvent({ type: 'response.created' });
+    await t.call.onEvent({ type: 'input_audio_buffer.dtmf_event_received', event: '3' });
+    await t.done([], 'cancelled');
+    expect(t.scripted()).toHaveLength(2);
+    expect(t.scripted()[1]!.response.instructions).toContain('call me');
+  });
+
+  it('a part that waits for him brings its follow-up instructions, said as about to be spoken', async () => {
+    const t = setup(undefined, (s) => addMessage(s, MOM, { raw_text: 'call me' }));
+    await t.call.start();
+    await t.spoke('1 flagged. Mom wrote: "call me"');
+    // The server moved on by itself to "That's everything.", which waits.
+    expect(t.notes().at(-1)).toMatch(/is now saying the next part.*Then: Wait silently/s);
+    expect(t.notes().join('\n')).not.toMatch(/has just said/);
+  });
+
+  it('holds a paused part back while he is talking, and says it after his turn', async () => {
+    const t = setup(undefined, (s) => {
+      addMessage(s, YOSSI, { raw_text: 'can I borrow the sefer' });
+      addMessage(s, MOM, { raw_text: 'are you coming home for Sukkos' });
+    });
+    t.config.applyVoice({ jid: YOSSI, aliases: [], isGroup: false, names: ['Yossi Cohen'], label: 'Yossi Cohen', lastActivity: null }, 'flag');
+    await t.call.start();
+    await t.spoke('2 flagged. Mom wrote: are you coming home for Sukkos');
+    const before = t.scripted().length;
+    await t.call.onEvent({ type: 'input_audio_buffer.speech_started' });
+    t.timers.at(-1)!.fn(); // the pause ends while he's talking
+    expect(t.scripted().length).toBe(before); // not sent: OpenAI would refuse a second response
+    await t.call.onEvent({ type: 'input_audio_buffer.speech_stopped' });
+    await t.call.onEvent({ type: 'response.created' });
+    await t.done([t.said('Sorry?')]);
+    expect(t.scripted().at(-1)!.response.instructions).toContain('can I borrow the sefer');
+  });
+
+  it('being talked over does not use up the retries for a part', async () => {
+    const t = setup(undefined, (s) => addMessage(s, MOM, { raw_text: 'are you coming home for Sukkos' }));
+    await t.call.start();
+    for (let i = 0; i < 4; i++) {
+      await t.spoke('1 flagged. Mom wrote', 'continue', 'cancelled');
+      await t.done([t.fn('next_item')]); // he says "go on"
+    }
+    expect(t.scripted().at(-1)!.response.instructions).toContain('Sukkos');
+    expect(t.scripted().at(-1)!.response.instructions).not.toContain("That's everything.");
   });
 
   it('sends only via keypad 1, then hangs up after the goodbye is spoken', async () => {
@@ -134,7 +182,7 @@ describe('realtime adapter', () => {
     await t.call.onEvent({ type: 'input_audio_buffer.dtmf_event_received', event: '3' }); // not lost while waiting
     t.timers.at(-1)!.fn();
     expect(t.scripted().at(-1)!.response.instructions).toContain('can I borrow the sefer');
-    expect(t.notes().at(-1)).toMatch(/pressed 3/);
+    expect(t.notes().at(-1)).toMatch(/Keypad 3/);
   });
 
   it('hangs up after three wrong PINs', async () => {

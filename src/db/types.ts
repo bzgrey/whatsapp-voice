@@ -91,3 +91,16 @@ export interface UsageEntry {
   audio_seconds?: number;
   cost_usd: number;
 }
+
+export type SpokenKind = 'urgent' | 'flagged' | 'rollcall' | 'read' | 'summary';
+
+/** One thing a call read out, kept so it can be repeated (see migration 004). */
+export interface SpokenPart {
+  call_id: number;
+  part: number;
+  chat_jid: string | null;
+  kind: SpokenKind;
+  text: string;
+  message_ids: number[];
+  created_at: number;
+}

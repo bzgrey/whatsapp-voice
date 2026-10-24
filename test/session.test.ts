@@ -253,3 +253,121 @@ describe('voice config', () => {
     expect(store.getChat(YOSSI)!.tier).toBe('flagged');
   });
 });
+
+describe('repeating what was read', () => {
+  /** A call that reads Mom (flagged) and Yossi (roll call), all said. */
+  async function briefed(t: ReturnType<typeof setup>) {
+    addMessage(t.store, MOM, { raw_text: 'are you coming home for Sukkos' });
+    addMessage(t.store, YOSSI, { raw_text: 'can I borrow the sefer' });
+    const s = t.call();
+    await s.opening();
+    s.confirmSpoken();
+    await s.tool('next_item', {});
+    s.confirmSpoken();
+    await s.tool('next_item', {}); // That's everything.
+    s.confirmSpoken();
+    return s;
+  }
+
+  it("repeats one chat's part word for word, later in the same call", async () => {
+    const t = setup();
+    const s = await briefed(t);
+    const r = await s.tool('repeat_briefing', { chat: 'Mom' });
+    expect(r.script).toMatchObject({ then: 'wait' });
+    expect(r.script!.text).toContain('are you coming home for Sukkos');
+    expect(r.script!.text).not.toContain('sefer');
+  });
+
+  it('repeats the whole briefing in order, one part at a time', async () => {
+    const t = setup();
+    const s = await briefed(t);
+    const first = await s.tool('repeat_briefing', { whole: true });
+    expect(first.script).toMatchObject({ then: 'continue' });
+    expect(first.script!.text).toContain('Sukkos');
+    s.confirmSpoken();
+    const second = await s.tool('next_item', {});
+    expect(second.script!.text).toMatch(/Yossi Cohen, 1 message: .*sefer/);
+    expect(second.script!.then).toBe('wait'); // the briefing was already finished
+  });
+
+  it("remembers the last call's briefing on the next call", async () => {
+    const t = setup();
+    const s1 = await briefed(t);
+    s1.end();
+    t.tick(3600);
+    const s2 = t.call();
+    expect((await s2.opening()).output).toContain('No new messages.');
+    s2.confirmSpoken();
+    const r = await s2.tool('repeat_briefing', { chat: 'Yossi' });
+    expect(r.script!.text).toMatch(/^From your last call: Yossi Cohen, 1 message/);
+    const all = await s2.tool('repeat_briefing', { previous_call: true, whole: true });
+    expect(all.script!.text).toMatch(/^From your last call: .*Sukkos/);
+  });
+
+  it('repeats a part that was cut off, and keeps it unheard until it is said', async () => {
+    const t = setup();
+    addMessage(t.store, MOM, { raw_text: 'are you coming home for Sukkos' });
+    const s = t.call();
+    await s.opening(); // Mom handed out, then line noise cuts it off
+    const r = await s.tool('repeat_briefing', {});
+    expect(r.script!.text).toContain('Sukkos');
+    expect(t.store.unheard()).toHaveLength(1);
+    s.confirmSpoken('2 flagged. Mom wrote: are you coming home for Sukkos');
+    expect(t.store.unheard()).toHaveLength(0);
+  });
+
+  it('a repeat mid-briefing puts the cut-off part back, then carries on', async () => {
+    const t = setup();
+    addMessage(t.store, MOM, { raw_text: 'are you coming home for Sukkos' });
+    addMessage(t.store, YOSSI, { raw_text: 'can I borrow the sefer' });
+    const s1 = t.call();
+    await s1.opening(); s1.confirmSpoken(); await s1.tool('next_item', {}); s1.confirmSpoken(); s1.end();
+    addMessage(t.store, DOVID_C, { raw_text: 'shiur moved to nine' });
+    const s2 = t.call();
+    await s2.opening(); // Dovid's roll call handed out, cut off by "what did Mom say last time?"
+    const r = await s2.tool('repeat_briefing', { chat: 'Mom' });
+    expect(r.script!.text).toContain('Sukkos');
+    expect(r.script!.then).toBe('continue');
+    s2.confirmSpoken();
+    const next = await s2.tool('next_item', {});
+    expect(next.script!.text).toContain('shiur moved to nine');
+    expect(t.store.unheard()).toHaveLength(1); // not yet said
+  });
+
+  it('keypad 3 says the last part again', async () => {
+    const t = setup();
+    const s = await briefed(t);
+    const r = await s.dtmf('3');
+    expect(r!.script!.text).toContain("That's everything.");
+  });
+
+  it('says so when there is nothing to repeat, and points to read_chat for a chat never read', async () => {
+    const t = setup();
+    const s = t.call();
+    await s.opening();
+    s.confirmSpoken();
+    expect((await s.tool('repeat_briefing', { whole: true })).output).toMatch(/Nothing has been read out yet/);
+    expect((await s.tool('repeat_briefing', { chat: 'Yossi' })).output).toMatch(/Call read_chat/);
+  });
+
+  it('forgets the text once its messages are purged or deleted', async () => {
+    const t = setup();
+    const s = await briefed(t);
+    const mom = t.store.unheardForChat(MOM)[0] ?? t.store.recentForChat(MOM, 0)[0]!;
+    t.store.deleteMessage(MOM, mom.id);
+    expect(t.store.spokenParts(s.callId, MOM)).toHaveLength(0);
+    t.store.purgeBefore(NOW + 10 * 86400);
+    expect(t.store.spokenParts(s.callId)).toHaveLength(0);
+  });
+});
+
+describe('search', () => {
+  it('matches any of the words given, so Hebrew and English both work', async () => {
+    const t = setup();
+    addMessage(t.store, YOSSI, { raw_text: 'החתונה ביום חמישי' });
+    const s = t.call();
+    await s.opening();
+    const r = await s.tool('search_recent', { queries: ['wedding', 'חתונה'] });
+    expect(r.output).toContain('החתונה');
+  });
+});

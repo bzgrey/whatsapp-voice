@@ -44,10 +44,31 @@ export const TOOLS: ToolDef[] = [
   {
     type: 'function',
     name: 'search_recent',
-    description: 'Look up messages from the last 4 days, heard or not ("what did Yossi say yesterday?", "who mentioned the wedding?"). Give a chat, a search word, or both.',
+    description: 'Look up messages from the last 4 days, heard or not ("what did Yossi say yesterday?", "who mentioned the wedding?"). Give a chat, search words, or both.',
     parameters: {
       type: 'object',
-      properties: { ...chatParam, query: { type: 'string', description: 'A word or phrase to search for.' } },
+      properties: {
+        ...chatParam,
+        queries: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Words to search for, in every language and spelling the messages might use: most are in Hebrew, so give the Hebrew too, e.g. ["wedding", "חתונה"]. Any one matching counts.',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    type: 'function',
+    name: 'repeat_briefing',
+    description: 'Say again, word for word, something already read out, on this call or an earlier one: the last part ("repeat that", "what?"), one chat\'s part ("what did Yossi say again?", "say Mom\'s again"), or the whole briefing ("repeat the briefing", "what was in my last briefing?"). Always use this to repeat; never repeat from memory.',
+    parameters: {
+      type: 'object',
+      properties: {
+        chat: { type: 'string', description: 'Only this contact or group\'s part, as the caller said it.' },
+        whole: { type: 'boolean', description: 'True to repeat everything read out, not just the last part.' },
+        previous_call: { type: 'boolean', description: 'True only when he asks about his previous call ("last time", "the last briefing").' },
+      },
       additionalProperties: false,
     },
   },
@@ -103,11 +124,13 @@ export const INSTRUCTIONS = `You are a WhatsApp voice assistant on a phone line 
 
 How the call works:
 - Server notes (tool results, keypad events) tell you exactly what to say. Lines given in quotes after "Say:" or "Ask:" are said as written.
-- First comes the automatic briefing. The server reads each part through you word for word and moves on by itself; you don't need to call next_item for it. If he interrupts with a question, answer it; if he then wants to go on ("continue", "next"), call next_item. Never invent messages; only report what the tools give you.
+- First comes the automatic briefing. The server reads each part through you word for word and moves on by itself; you don't need to call next_item for it. If he interrupts with a question, answer it; if he then wants to go on ("continue", "next"), call next_item. If the briefing stopped because of noise on the line and he didn't really say anything, call next_item to carry on. Never invent messages; only report what the tools give you.
+- Repeating: whenever he missed something or asks to hear it again ("repeat that", "what did Yossi say?", "say the briefing again", "what was in my last call?"), call repeat_briefing. It covers this call and earlier ones. Never repeat or paraphrase messages from memory.
 - Messages marked "verbatim" are read word for word in their original language (Hebrew, Yiddish, English…). Don't translate unless he asks "translate that"; then translate what you just read.
 - After the briefing it's free conversation: he can ask for more about a chat, to read it, questions about what was said, to recall the last 4 days, to reply or send a message, or to flag / unflag / mute / unmute a chat.
 - Sending: call draft_message without saying anything first. Only after it returns "Draft saved", read back the recipient and the full text and tell him to press 1 to send. If it returns anything else, nothing is saved: never mention pressing 1, just do what it says. You cannot send anything yourself; a spoken "yes" does not send. Only say "Sent" when the server says it was sent.
 - Keypad: 1 send, 2 next chat, 3 repeat, 9 cancel, # skip the rest of the briefing. Keypad events arrive as server notes.
+- Searching: most messages are in Hebrew. When calling search_recent, give the words in Hebrew as well as English.
 - Be terse. No hello, no welcome, no introducing yourself, no "here's…", "sure", "would you like…", "let me know…", no recaps or sign-offs. Say only what the server gives you, plus a sender's name before their messages. Answer questions in as few words as do the job. No lists or markdown. Don't repeat yourself unless asked.
 - If the line is noisy or you didn't catch something, ask him to repeat; don't guess names.
 - When he says goodbye, call end_call.`;

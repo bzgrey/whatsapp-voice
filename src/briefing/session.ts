@@ -1,6 +1,6 @@
 import type { ConfigSync, TierAction } from '../config/sync.ts';
 import type { Store } from '../db/store.ts';
-import type { DraftRow, MessageRow } from '../db/types.ts';
+import type { DraftRow, MessageRow, SpokenKind, SpokenPart } from '../db/types.ts';
 import type { Tasks } from '../llm/tasks.ts';
 import { RETENTION_SECONDS, STALE_SECONDS } from '../env.ts';
 import { errMsg, log } from '../log.ts';
@@ -10,7 +10,7 @@ import { buildDirectory, resolveSpokenWithFallback, type Entry } from '../config
 import { chatContext, narrationFor, refreshSummaryLine, senderNamer } from '../ingest/summaries.ts';
 import { getWaStatus } from '../whatsapp/status.ts';
 import {
-  buildBriefing, countsSentence, gatherUnheard, itemChat, itemMessageIds, itemPrompt, itemScript, itemSpeakable, type Item,
+  buildBriefing, countsSentence, gatherUnheard, sentences, itemChat, itemMessageIds, itemPrompt, itemScript, itemSpeakable, type Item,
 } from './build.ts';
 import { messageContent, renderMessages, sincePhrase } from './render.ts';
 
@@ -35,6 +35,16 @@ export interface SessionDeps {
 export interface Script {
   text: string;
   then: 'continue' | 'wait';
+  /** For a part that waits: what the model should do once it has been said. */
+  after?: string;
+}
+
+/** Something read out earlier that can be said again. */
+interface Replay {
+  text: string;
+  /** Messages it covered (any still unheard count as heard once it's said). */
+  ids: number[];
+  jid: string | null;
 }
 
 export interface Output {
@@ -109,6 +119,15 @@ export class CallSession {
   /** The script for the output being built (taken by whoever returns it). */
   private script: Script | null = null;
   private spoken = new Set<string>();
+  /** The briefing step behind the pending part, to put back if it's interrupted by a repeat or a read. */
+  private pendingStep: Step | null = null;
+  /** Steps already written to the spoken log (a put-back step isn't logged twice). */
+  private logged = new WeakSet<Step>();
+  private partNo = 0;
+  /** Parts queued to be said again (repeat_briefing, keypad 3). */
+  private replay: Replay[] = [];
+  /** The last scripted part that was said, for "repeat that". */
+  private lastSaid: Replay | null = null;
   /** Times next_item was refused for the current part (we give up insisting after a couple). */
   private refusals = 0;
   private lastItemKind: Item['kind'] | null = null;
@@ -184,7 +203,9 @@ export class CallSession {
       for (const w of contentWords(said)) this.spoken.add(w);
       if (coverage(this.pending.need, this.spoken) < SPOKEN_COVERAGE) return;
     }
+    if (this.pending?.script) this.lastSaid = { text: this.pending.script.text, ids: [...this.handed], jid: this.lastChat };
     this.pending = null;
+    this.pendingStep = null;
     this.spoken.clear();
     this.refusals = 0;
     if (!this.handed.length) return;
@@ -192,6 +213,11 @@ export class CallSession {
     this.playing.push({ ids: this.handed, at: immediate ? 0 : this.audioEndsAt });
     this.handed = [];
     this.settle();
+  }
+
+  /** The caller cut a response off (spoke or pressed a key): repeating the part isn't the model refusing. */
+  interrupted() {
+    this.refusals = 0;
   }
 
   /**
@@ -224,8 +250,63 @@ export class CallSession {
     const need = contentWords(speakable);
     this.script = script;
     this.pending = need.size ? { prompt, need, script } : null;
+    this.pendingStep = null;
     this.spoken.clear();
     this.refusals = 0;
+  }
+
+  /**
+   * Set aside the part being said (cut off before it was heard): its briefing step
+   * goes back in the queue, and is skipped later if its messages get heard meanwhile.
+   */
+  private dropPending() {
+    if (this.pendingStep) this.steps.splice(this.pos, 0, this.pendingStep);
+    this.pendingStep = null;
+    this.pending = null;
+    this.handed = [];
+    this.script = null;
+    this.spoken.clear();
+    this.refusals = 0;
+  }
+
+  /** Record what's being read out, so it can be repeated later in this call or on the next. */
+  private logSpoken(kind: SpokenKind, parts: Replay[]) {
+    if (!parts.length) return;
+    this.partNo++;
+    this.d.store.logSpoken(parts.map((p) => ({
+      call_id: this.callId, part: this.partNo, chat_jid: p.jid, kind, text: p.text, message_ids: p.ids,
+    })), this.d.now());
+  }
+
+  private logItem(item: Item) {
+    if (item.kind === 'rollcall') {
+      this.logSpoken('rollcall', item.entries.map((e) => ({ jid: e.jid, text: `${e.name}, ${e.line}.`, ids: e.messageIds })));
+    } else if (!(item.kind === 'flagged' && item.mode === 'ask')) {
+      this.logSpoken(item.kind, [{ jid: item.jid, text: itemScript(item), ids: item.messageIds }]);
+    }
+  }
+
+  /** Hand out the next queued repeat. */
+  private nextReplay(): string {
+    const r = this.replay.shift()!;
+    this.hand([...this.d.store.stillUnheard(r.ids)], r.jid);
+    const last = !this.replay.length;
+    // After the last one, an unfinished briefing carries on by itself.
+    const then = last && this.briefingDone ? 'wait' : 'continue';
+    const prompt = `Say exactly: "${r.text}"${last ? '\nThat was a repeat.' : ''}`;
+    this.expect(prompt, r.text, { text: r.text, then, after: 'That was a repeat. Wait for him.' });
+    return prompt;
+  }
+
+  /** Say the last part again: the one cut off, or else the last one said. Null if there's nothing. */
+  private repeatLast(): string | null {
+    if (this.pending?.script) {
+      this.script = this.pending.script;
+      return `Say exactly: "${this.pending.script.text}"`;
+    }
+    if (!this.lastSaid) return null;
+    this.replay.unshift(this.lastSaid);
+    return this.nextReplay();
   }
 
   private hand(ids: number[], chat: string | null) {
@@ -248,10 +329,11 @@ export class CallSession {
       log.warn(`call ${this.callId}: part not spoken after ${MAX_REFUSALS} retries; left unheard`);
       this.handed = [];
       this.pending = null;
+      this.pendingStep = null;
     }
     this.confirmSpoken(undefined, skip);
-    const out = await this.nextChunk();
-    return out;
+    if (this.replay.length) return this.nextReplay();
+    return this.nextChunk();
   }
 
   private async nextChunk(): Promise<string> {
@@ -283,8 +365,9 @@ export class CallSession {
         if (store.getDraft(step.draft.id)?.status !== 'pending') continue;
         this.activeDraft = step.draft;
         const line = `You had an unsent message to ${displayName(store, step.draft.chat_jid)}: '${step.draft.text}'. Press 1 to send, or 9 to discard.`;
-        out.push(`Say: "${line}" Wait for the keypad. If they'd rather carry on, call next_item; the draft stays saved.`);
-        return done(line, { text: [...said, line].join(' '), then: 'wait' });
+        const after = "Wait for the keypad. If they'd rather carry on, call next_item; the draft stays saved.";
+        out.push(`Say: "${line}" ${after}`);
+        return done(line, { text: [...said, line].join(' '), then: 'wait', after });
       }
       const item = this.stillRelevant(step.item);
       if (!item) continue;
@@ -295,10 +378,16 @@ export class CallSession {
         : PAUSE_BETWEEN_CHATS_MS;
       this.lastItemKind = item.kind;
       store.updateCall(this.callId, { current_chat: item.kind === 'rollcall' ? item.entries[0]!.jid : item.jid, in_briefing: true });
+      if (!this.logged.has(step)) { this.logged.add(step); this.logItem(item); }
       out.push(itemPrompt(item));
       const ask = item.kind === 'flagged' && item.mode === 'ask';
       out.push(ask ? 'After reading or summarizing it, call next_item.' : NEXT);
-      return done(itemSpeakable(item), { text: [...said, itemScript(item)].join(' '), then: ask ? 'wait' : 'continue' });
+      const after = ask
+        ? `When he answers, call read_chat or summarize_chat with chat "${item.name}". After that, call next_item to carry on with the briefing.`
+        : undefined;
+      const prompt = done(itemSpeakable(item), { text: [...said, itemScript(item)].join(' '), then: ask ? 'wait' : 'continue', after });
+      this.pendingStep = step;
+      return prompt;
     }
     if (!this.briefingDone) {
       this.briefingDone = true;
@@ -309,7 +398,7 @@ export class CallSession {
       out.push('The briefing is already finished. Say "That\'s everything." if you haven\'t, then wait for him.');
     }
     const prompt = out.join('\n');
-    const script: Script | null = said.length ? { text: said.join(' '), then: 'wait' } : null;
+    const script: Script | null = said.length ? { text: said.join(' '), then: 'wait', after: 'Wait silently for him to speak.' } : null;
     // Only statements (e.g. the greeting) still need saying before anything else is handed out.
     if (said.length) this.expect(prompt, said.join(' '), script);
     else { this.pending = null; this.script = null; }
@@ -339,9 +428,16 @@ export class CallSession {
           return { output, pauseMs: this.nextPause || undefined, script: this.takeScript() };
         }
         case 'skip_briefing': return { output: this.skipBriefing() };
-        case 'read_chat': return { output: await this.readChat(args.chat) };
-        case 'summarize_chat': return { output: await this.summarizeChat(args.chat) };
-        case 'search_recent': return { output: await this.searchRecent(args.chat, args.query) };
+        case 'read_chat': { const output = await this.readChat(args.chat); return { output, script: this.takeScript() }; }
+        case 'summarize_chat': { const output = await this.summarizeChat(args.chat); return { output, script: this.takeScript() }; }
+        case 'repeat_briefing': {
+          const output = await this.repeat(args.chat, !!args.whole, !!args.previous_call);
+          return { output, script: this.takeScript() };
+        }
+        case 'search_recent': {
+          const queries = [...(Array.isArray(args.queries) ? args.queries : []), ...(args.query ? [args.query] : [])].map(String);
+          return { output: await this.searchRecent(args.chat, queries) };
+        }
         case 'draft_message': return { output: await this.draftMessage(args.to, String(args.text ?? ''), !!args.reply_in_context) };
         case 'cancel_draft': return { output: this.cancelDraft() };
         case 'set_chat_tier': return { output: await this.setTier(args.chat, args.action) };
@@ -359,6 +455,7 @@ export class CallSession {
 
   private skipBriefing(): string {
     this.confirmSpoken();
+    this.replay = [];
     this.pos = this.steps.length;
     this.briefingDone = true;
     this.d.store.updateCall(this.callId, { current_chat: null, in_briefing: false });
@@ -398,14 +495,24 @@ export class CallSession {
     const { store, now } = this.d;
     const unheard = store.unheardForChat(entry.jid);
     this.lastChat = entry.jid;
+    const after = 'Wait for him.';
     if (!unheard.length) {
       const recent = store.recentForChat(entry.jid, now() - RETENTION_SECONDS, 8);
       if (!recent.length) return `There are no messages from ${entry.label} in the last 4 days. Say so.`;
-      return `No new messages from ${entry.label}. The most recent ones, oldest first; read these lines as written, the quoted text verbatim in its original language:\n${this.speakLines(recent).map((l) => `  ${l}`).join('\n')}`;
+      const lines = this.speakLines(recent);
+      const text = `No new messages from ${entry.label}. The latest: ${sentences(lines)}`;
+      this.dropPending();
+      this.logSpoken('read', [{ jid: entry.jid, text, ids: recent.filter((m) => !m.from_me).map((m) => m.rowid) }]);
+      this.script = { text, then: 'wait', after };
+      return `No new messages from ${entry.label}. The most recent ones, oldest first; read these lines as written, the quoted text verbatim in its original language:\n${lines.map((l) => `  ${l}`).join('\n')}`;
     }
     const r = renderMessages(unheard, narrationFor(store, unheard));
-    this.hand(unheard.map((m) => m.rowid), entry.jid);
-    this.expect(`Read ${entry.label}'s messages to the caller.`, r.lines.join(' '));
+    const ids = unheard.map((m) => m.rowid);
+    const text = `${entry.label}, ${r.count} new message${r.count === 1 ? '' : 's'}. ${sentences(r.lines)}${r.trivial ? ` Plus ${r.trivial}.` : ''}`;
+    this.dropPending();
+    this.hand(ids, entry.jid);
+    this.expect(`Read ${entry.label}'s messages to the caller.`, r.lines.join(' '), { text, then: 'wait', after });
+    this.logSpoken('read', [{ jid: entry.jid, text, ids }]);
     return `${entry.label}, ${r.count} new message${r.count === 1 ? '' : 's'}. Read these lines as written; each names who sent it. Read the quoted text verbatim in its original language, without translating:\n${r.lines.map((l) => `  ${l}`).join('\n')}${r.trivial ? `\nThen mention: plus ${r.trivial}.` : ''}`;
   }
 
@@ -419,27 +526,79 @@ export class CallSession {
     const unheard = store.unheardForChat(entry.jid);
     if (!tasks?.llm.available) return `Summarize this conversation with ${entry.label} for the caller in a few spoken sentences, focusing on lines marked (new):\n${lines.join('\n')}`;
     const summary = await tasks.summaryDetail(entry.label, entry.isGroup, lines);
-    this.hand(unheard.map((m) => m.rowid), entry.jid);
-    this.expect(`Give the caller this summary of ${entry.label}: ${summary}`, summary);
+    const ids = unheard.map((m) => m.rowid);
+    this.dropPending();
+    this.hand(ids, entry.jid);
+    this.expect(`Give the caller this summary of ${entry.label}: ${summary}`, summary, { text: summary, then: 'wait', after: 'Wait for him.' });
+    this.logSpoken('summary', [{ jid: entry.jid, text: summary, ids }]);
     return `Summary of ${entry.label}. Say this naturally:\n${summary}`;
   }
 
-  private async searchRecent(chat: string | undefined, query: string | undefined): Promise<string> {
+  private async searchRecent(chat: string | undefined, queries: string[]): Promise<string> {
     const { store, now } = this.d;
     const header = 'Messages from the last 4 days (nothing older exists). Answer the caller\'s question from these; if the answer isn\'t here, say so.';
+    const terms = [...new Set(queries.map((q) => q.trim().toLowerCase()).filter(Boolean))];
     if (chat?.trim()) {
       const { entry, ask } = await this.resolve(chat);
       if (!entry) return ask!;
       this.lastChat = entry.jid;
-      const lines = chatContext(store, entry.jid, now()).filter((l) => !query || l.toLowerCase().includes(query.toLowerCase()));
-      const all = lines.length ? lines : chatContext(store, entry.jid, now());
-      return all.length ? `${header}\nChat with ${entry.label}:\n${all.join('\n')}` : `No messages with ${entry.label} in the last 4 days.`;
+      const all = chatContext(store, entry.jid, now());
+      const lines = all.filter((l) => !terms.length || terms.some((t) => l.toLowerCase().includes(t)));
+      const shown = lines.length ? lines : all;
+      return shown.length ? `${header}\nChat with ${entry.label}:\n${shown.join('\n')}` : `No messages with ${entry.label} in the last 4 days.`;
     }
-    if (!query?.trim()) return 'Ask which chat or what to look for.';
-    const hits = store.search(query.trim(), now() - RETENTION_SECONDS);
-    if (!hits.length) return `Nothing in the last 4 days mentions "${query}". Say so.`;
+    if (!terms.length) return 'Ask which chat or what to look for.';
+    // Any of the spellings / languages given counts as a hit.
+    const byId = new Map<number, MessageRow>();
+    for (const t of terms) for (const m of store.search(t, now() - RETENTION_SECONDS)) byId.set(m.rowid, m);
+    const hits = [...byId.values()].sort((a, b) => b.created_at - a.created_at).slice(0, 40);
+    if (!hits.length) return `Nothing in the last 4 days mentions ${terms.map((t) => `"${t}"`).join(' or ')}. Say so.`;
     const sender = senderNamer(store);
     return `${header}\n${hits.map((m) => `[${displayName(store, m.chat_jid)}] ${m.from_me ? 'Me' : sender(m)}: ${messageContent(m)}`).join('\n')}`;
+  }
+
+  /**
+   * Say again what was read out: one chat's part, the whole briefing, or the last
+   * part. Looks in this call first, then the most recent earlier call.
+   */
+  private async repeat(chat: string | undefined, whole: boolean, previousCall: boolean): Promise<string> {
+    const { store } = this.d;
+    if (!chat?.trim() && !whole && !previousCall) {
+      const last = this.repeatLast();
+      if (last) return `Repeating the last part.\n${last}`;
+    }
+    let jid: string | undefined;
+    let label = 'the briefing';
+    if (chat?.trim()) {
+      const { entry, ask } = await this.resolve(chat);
+      if (!entry) return ask!;
+      jid = entry.jid;
+      label = entry.label;
+      this.lastChat = entry.jid;
+    }
+    let parts: SpokenPart[] = previousCall ? [] : store.spokenParts(this.callId, jid);
+    let earlier = false;
+    if (!parts.length) {
+      const prev = store.previousSpokenCall(this.callId, jid);
+      if (prev) { parts = store.spokenParts(prev, jid); earlier = true; }
+    }
+    if (!parts.length) {
+      return jid
+        ? `Nothing from ${label} was read out on this call or recent ones. Call read_chat with chat "${label}" to read their messages.`
+        : 'Nothing has been read out yet, on this call or the last one. Say so.';
+    }
+    // Parts said together (a roll-call batch) go together.
+    const groups = new Map<number, Replay>();
+    for (const p of parts) {
+      const g = groups.get(p.part);
+      if (g) { g.text += ` ${p.text}`; g.ids.push(...p.message_ids); } else groups.set(p.part, { text: p.text, ids: [...p.message_ids], jid: p.chat_jid });
+    }
+    const replay = [...groups.values()];
+    if (earlier) replay[0]!.text = `From your last call: ${replay[0]!.text}`;
+    this.dropPending();
+    this.replay = replay;
+    log.info(`call ${this.callId}: repeating ${replay.length} part${replay.length === 1 ? '' : 's'}${earlier ? ' from an earlier call' : ''}`);
+    return `Repeating ${label}${earlier ? ' from the last call' : ''}.\n${this.nextReplay()}`;
   }
 
   private async draftMessage(to: string | undefined, text: string, inContext: boolean): Promise<string> {
@@ -494,7 +653,12 @@ export class CallSession {
       case '2':
         if (this.briefingDone) return { output: 'The caller pressed 2 (next), but the briefing is finished. Say so briefly.' };
         return { output: `The caller pressed 2: skip to the next chat. Stop the current one.\n${await this.advance(true)}`, script: this.takeScript() };
-      case '3': return { output: 'The caller pressed 3: repeat the last thing you said, word for word.' };
+      case '3': {
+        const last = this.repeatLast();
+        return last
+          ? { output: `The caller pressed 3: repeat.\n${last}`, script: this.takeScript() }
+          : { output: 'The caller pressed 3: repeat the last thing you said, word for word.' };
+      }
       case '9':
         return { output: this.activeDraft ? this.cancelDraft() : 'The caller pressed 9 (cancel), but nothing is pending. Ignore it unless they ask.' };
       case '#':

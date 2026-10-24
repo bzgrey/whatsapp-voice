@@ -187,6 +187,7 @@ All server pieces run in **one Node process** (TypeScript via `tsx`) under PM2, 
 - [ ] **5. Voice agent** (model: gpt-realtime-2.1-mini, chosen 2026-10-06; adapter in `src/call/`, unit-tested, not yet on a real call)
   - [x] Webhook + control WebSocket, caller ID / PIN check
   - [x] Tools wired to the briefing state machine
+  - [x] Repeat anything read out, word for word, this call or the last (`repeat_briefing`, keypad 3; `spoken_parts` table)
   - [ ] Send gate: full read-back, keypad 1 only; quote-replies; drafts persisted
   - [ ] Voice config commands (flag/unflag/mute/unmute)
   - [ ] Voice notes on request (if feasible)
