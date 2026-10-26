@@ -53,6 +53,8 @@ export class RealtimeCall {
   private playoutUntil = 0;
   /** A paused next part is waiting to be handed over. */
   private waiting = false;
+  /** Instructions for after the forced part now being spoken; added to the conversation once it ends. */
+  private afterNote: string | null = null;
 
   constructor(
     private session: CallSession,
@@ -127,6 +129,11 @@ export class RealtimeCall {
     this.logUsage(r.usage);
     const completed = r.status === 'completed';
     if (r.status === 'cancelled') this.session.interrupted();
+    if (this.afterNote) {
+      // Now that the part is over (said or cut off), tell the model what comes next.
+      this.io.send(noteItem(this.afterNote));
+      this.afterNote = null;
+    }
     /** A briefing part the server had spoken word for word; 'continue' means go straight on to the next. */
     const scripted = r.metadata?.script;
     const calls = completed ? (r.output ?? []).filter((o) => o.type === 'function_call') : [];
@@ -157,8 +164,8 @@ export class RealtimeCall {
       const out = await this.session.tool('next_item', {});
       log.info(`call ${this.session.callId}: next part${out.output.startsWith('Not yet') ? ' (repeat: not spoken yet)' : ''}`);
       if (out.hangup) this.armHangup();
-      // A part that carries on needs no note; one that waits for him brings its instructions for what comes after.
-      return this.schedule([], out.script, out.pauseMs ?? 0, out.script?.then === 'continue' ? undefined : noteFor(out));
+      // A forced part needs no note (what comes after it is added once it ends).
+      return this.schedule([], out.script, out.pauseMs ?? 0, out.script ? undefined : out.output);
     }
     for (const c of calls) {
       let args: Record<string, unknown> = {};
@@ -169,7 +176,7 @@ export class RealtimeCall {
       if (out.hangup) this.armHangup();
       pauseMs = Math.max(pauseMs, out.pauseMs ?? 0);
       if (out.script) script = out.script;
-      const output = noteFor(out);
+      const output = out.script ? SCRIPTED_TOOL_OUTPUT : out.output;
       outputs.push({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: c.call_id, output } });
     }
     this.schedule(outputs, script, pauseMs);
@@ -215,7 +222,9 @@ export class RealtimeCall {
    */
   private deliver(out: Output, interrupt = false, prefix?: string) {
     if (out.hangup) this.armHangup();
-    const note = { text: `${prefix ? `${prefix}. ` : ''}${noteFor(out)}`, script: out.script };
+    // A forced part carries its own words; at most say which key was pressed.
+    const text = out.script ? (prefix ? `${prefix}.` : undefined) : `${prefix ? `${prefix}: ` : ''}${out.output}`;
+    const note = { text, script: out.script };
     if (this.waiting) { this.notes.push(note); return; }
     if (this.responding) {
       this.notes.push(note);
@@ -225,7 +234,7 @@ export class RealtimeCall {
       }
       return;
     }
-    this.io.send(noteItem(note.text));
+    if (text) this.io.send(noteItem(text));
     this.createResponse(out.script);
   }
 
@@ -236,12 +245,26 @@ export class RealtimeCall {
     this.io.later(() => void this.hangup(), 15_000);
   }
 
-  /** Start a response; with a script, one that can only say those exact words. */
+  /**
+   * Start a response. With a script, one that can only say those exact words:
+   * it gets a context of its own (`input`), so it can't read out a server note or
+   * repeat an earlier part from the conversation, but what it says is still added
+   * to the conversation (`conversation: 'auto'`) for later questions.
+   */
   private createResponse(script?: Script) {
     this.responding = true;
-    this.io.send(script
-      ? { type: 'response.create', response: { instructions: scriptInstructions(script.text), tool_choice: 'none', metadata: { script: script.then } } }
-      : { type: 'response.create' });
+    if (!script) { this.io.send({ type: 'response.create' }); return; }
+    this.io.send({
+      type: 'response.create',
+      response: {
+        conversation: 'auto',
+        input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Say the text now.' }] }],
+        instructions: scriptInstructions(script.text),
+        tool_choice: 'none',
+        metadata: { script: script.then },
+      },
+    });
+    this.afterNote = script.then === 'wait' ? afterNoteFor(script) : null;
   }
 
   private async hangup() {
@@ -265,24 +288,19 @@ export class RealtimeCall {
   }
 }
 
-/** Server notes go in as bracketed user messages (what the phase 3 test proved works). */
-/** What the model is told when the server speaks a briefing part through it. */
-const SCRIPTED_NOTE = 'The server is reading the next part of the briefing to the caller and carries on by itself. '
-  + "Don't call next_item for it. If he interrupts, answer him; call next_item only if he then wants the briefing to go on.";
+/** A tool's result when the server speaks it itself through a forced response. */
+const SCRIPTED_TOOL_OUTPUT = 'The server is reading this to him through you, word for word.';
 
-/**
- * What the model is told about an output. The note goes in just before the
- * forced response, so it speaks of the part as about to be said.
- */
-const noteFor = (out: Output) => !out.script ? out.output
-  : out.script.then === 'continue' ? SCRIPTED_NOTE
-  : `The server is now saying the next part to the caller through you, word for word. Once it has been said, don't say it again. Then: ${out.script.after ?? 'wait for him.'}`;
+/** Added to the conversation after a forced part that waits for him: what to do next. */
+const afterNoteFor = (script: Script) =>
+  `The server just read a part to him through you (it may have been cut off). Don't repeat it unless he asks. Next: ${script.after ?? 'wait for him.'}`;
 
 /** Per-response instructions that make the model voice the server's exact words. */
 export const scriptInstructions = (text: string) => `You are reading WhatsApp messages aloud on a phone call. Say exactly the text below, word for word, and nothing else: no introduction, no comment, no question or offer afterwards. Read quoted text in its original language (Hebrew, Yiddish, English…) without translating. Speak clearly, with a short pause between messages.
 
 ${text}`;
 
+/** Server notes go in as bracketed user messages (what the phase 3 test proved works). */
 const noteItem = (text: string) => ({
   type: 'conversation.item.create',
   item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `[Server: ${text}]` }] },

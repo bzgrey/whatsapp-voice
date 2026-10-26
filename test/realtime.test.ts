@@ -93,7 +93,7 @@ describe('realtime adapter', () => {
     expect(t.sent.at(-1)).toEqual({ type: 'response.cancel' });
     const before = t.notes().length;
     await t.done([], 'cancelled');
-    expect(t.notes().slice(before)).toEqual([expect.stringMatching(/Keypad 9\. The caller pressed 9/)]);
+    expect(t.notes().slice(before)).toContainEqual(expect.stringMatching(/Keypad 9: The caller pressed 9/));
     expect(t.sent.at(-1)).toEqual({ type: 'response.create' });
   });
 
@@ -107,13 +107,34 @@ describe('realtime adapter', () => {
     expect(t.scripted()[1]!.response.instructions).toContain('call me');
   });
 
-  it('a part that waits for him brings its follow-up instructions, said as about to be spoken', async () => {
+  it('a part that waits for him gets its follow-up instructions only once it has ended', async () => {
     const t = setup(undefined, (s) => addMessage(s, MOM, { raw_text: 'call me' }));
     await t.call.start();
     await t.spoke('1 flagged. Mom wrote: "call me"');
-    // The server moved on by itself to "That's everything.", which waits.
-    expect(t.notes().at(-1)).toMatch(/is now saying the next part.*Then: Wait silently/s);
-    expect(t.notes().join('\n')).not.toMatch(/has just said/);
+    // The server moved on by itself to "That's everything.", which waits: no note yet.
+    expect(t.notes().join('\n')).not.toMatch(/Wait silently/);
+    await t.spoke("That's everything.", 'wait');
+    expect(t.notes().at(-1)).toMatch(/just read a part to him.*Next: Wait silently/s);
+  });
+
+  it('never puts a note just before a forced part, and gives it a context of its own', async () => {
+    const t = setup(undefined, (s) => {
+      addMessage(s, MOM, { raw_text: 'call me' });
+      addMessage(s, YOSSI, { raw_text: 'sefer?' });
+    });
+    await t.call.start();
+    await t.spoke('1 flagged, 1 other. Mom wrote: "call me"');
+    t.timers.at(-1)?.fn();
+    await t.spoke('Yossi Cohen, 1 message: sefer?');
+    await t.call.onEvent({ type: 'response.created' });
+    await t.done([t.fn('read_chat', { chat: 'Mom' })]);
+    expect(t.scripted().length).toBeGreaterThanOrEqual(3);
+    t.sent.forEach((e, i) => {
+      if (e.type !== 'response.create' || !e.response?.instructions) return;
+      expect(e.response).toMatchObject({ conversation: 'auto', input: [expect.objectContaining({ role: 'user' })] });
+      expect(t.sent[i - 1]?.item?.role).not.toBe('user'); // nothing the model could read out
+    });
+    expect(t.outputs().at(-1)).toMatch(/reading this to him/);
   });
 
   it('holds a paused part back while he is talking, and says it after his turn', async () => {
