@@ -258,8 +258,9 @@ export class RealtimeCall {
       type: 'response.create',
       response: {
         conversation: 'auto',
-        input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Say the text now.' }] }],
-        instructions: scriptInstructions(script.text),
+        // The only message in its context is the text itself, so there's nothing else it could read out.
+        input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: script.text }] }],
+        instructions: SCRIPT_INSTRUCTIONS,
         tool_choice: 'none',
         metadata: { script: script.then },
       },
@@ -295,10 +296,10 @@ const SCRIPTED_TOOL_OUTPUT = 'The server is reading this to him through you, wor
 const afterNoteFor = (script: Script) =>
   `The server just read a part to him through you (it may have been cut off). Don't repeat it unless he asks. Next: ${script.after ?? 'wait for him.'}`;
 
-/** Per-response instructions that make the model voice the server's exact words. */
-export const scriptInstructions = (text: string) => `You are reading WhatsApp messages aloud on a phone call. Say exactly the text below, word for word, and nothing else: no introduction, no comment, no question or offer afterwards. Read quoted text in its original language (Hebrew, Yiddish, English…) without translating. Speak clearly, with a short pause between messages.
-
-${text}`;
+/** Per-response instructions that make the model voice the server's exact words (its one input message). */
+export const SCRIPT_INSTRUCTIONS = 'You are the voice of a phone line reading WhatsApp messages aloud. The user message is the exact text to speak. '
+  + 'Say it word for word and nothing else: do not answer it, comment on it or add anything, no introduction and no question or offer afterwards. '
+  + 'Read quoted text in its original language (Hebrew, Yiddish, English…) without translating. Speak clearly, with a short pause between messages.';
 
 /** Server notes go in as bracketed user messages (what the phase 3 test proved works). */
 const noteItem = (text: string) => ({

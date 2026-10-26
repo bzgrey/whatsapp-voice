@@ -42,7 +42,7 @@ describe('realtime adapter', () => {
     const t = setup(undefined, (s) => addMessage(s, MOM, { raw_text: 'call me' }));
     await t.call.start();
     const first = t.scripted()[0]!.response;
-    expect(first.instructions).toMatch(/1 flagged\..*call me/s);
+    expect(first.input[0].content[0].text).toMatch(/1 flagged\..*call me/s);
     expect(first).toMatchObject({ tool_choice: 'none', metadata: { script: 'continue' } });
 
     // The first-call bug: the model chains next_item without speaking. Nothing is marked heard,
@@ -51,7 +51,7 @@ describe('realtime adapter', () => {
     await t.done([t.fn('next_item')]);
     expect(t.store.unheard()).toHaveLength(1);
     expect(t.scripted()).toHaveLength(2);
-    expect(t.scripted()[1]!.response.instructions).toContain('call me');
+    expect(t.scripted()[1]!.response.input[0].content[0].text).toContain('call me');
 
     await t.spoke('1 flagged. Mom wrote: call me', 'continue', 'cancelled'); // caller talked over it
     expect(t.store.unheard()).toHaveLength(1);
@@ -61,7 +61,7 @@ describe('realtime adapter', () => {
     expect(t.store.unheard()).toHaveLength(1); // said, but the audio is still playing
     // The server carried on by itself: the end of the briefing, which then waits.
     expect(t.scripted()[2]!.response).toMatchObject({ metadata: { script: 'wait' } });
-    expect(t.scripted()[2]!.response.instructions).toContain("That's everything.");
+    expect(t.scripted()[2]!.response.input[0].content[0].text).toContain("That's everything.");
     t.wait(10_000);
     await t.call.onEvent({ type: 'response.created' });
     expect(t.store.unheard()).toHaveLength(0);
@@ -72,7 +72,7 @@ describe('realtime adapter', () => {
     const t = setup(undefined, (s) => addMessage(s, MOM, { raw_text: 'are you coming home for Sukkos' }));
     await t.call.start();
     for (let i = 0; i < 3; i++) await t.spoke('Okay, let me read those flagged messages carefully.');
-    expect(t.scripted().at(-1)!.response.instructions).toContain("That's everything.");
+    expect(t.scripted().at(-1)!.response.input[0].content[0].text).toContain("That's everything.");
     expect(t.store.unheard()).toHaveLength(1);
   });
 
@@ -104,7 +104,7 @@ describe('realtime adapter', () => {
     await t.call.onEvent({ type: 'input_audio_buffer.dtmf_event_received', event: '3' });
     await t.done([], 'cancelled');
     expect(t.scripted()).toHaveLength(2);
-    expect(t.scripted()[1]!.response.instructions).toContain('call me');
+    expect(t.scripted()[1]!.response.input[0].content[0].text).toContain('call me');
   });
 
   it('a part that waits for him gets its follow-up instructions only once it has ended', async () => {
@@ -132,6 +132,8 @@ describe('realtime adapter', () => {
     t.sent.forEach((e, i) => {
       if (e.type !== 'response.create' || !e.response?.instructions) return;
       expect(e.response).toMatchObject({ conversation: 'auto', input: [expect.objectContaining({ role: 'user' })] });
+      expect(e.response.input).toHaveLength(1); // only the words to say: nothing else to read out
+      expect(e.response.instructions).not.toContain('sefer');
       expect(t.sent[i - 1]?.item?.role).not.toBe('user'); // nothing the model could read out
     });
     expect(t.outputs().at(-1)).toMatch(/reading this to him/);
@@ -152,7 +154,7 @@ describe('realtime adapter', () => {
     await t.call.onEvent({ type: 'input_audio_buffer.speech_stopped' });
     await t.call.onEvent({ type: 'response.created' });
     await t.done([t.said('Sorry?')]);
-    expect(t.scripted().at(-1)!.response.instructions).toContain('can I borrow the sefer');
+    expect(t.scripted().at(-1)!.response.input[0].content[0].text).toContain('can I borrow the sefer');
   });
 
   it('being talked over does not use up the retries for a part', async () => {
@@ -162,8 +164,8 @@ describe('realtime adapter', () => {
       await t.spoke('1 flagged. Mom wrote', 'continue', 'cancelled');
       await t.done([t.fn('next_item')]); // he says "go on"
     }
-    expect(t.scripted().at(-1)!.response.instructions).toContain('Sukkos');
-    expect(t.scripted().at(-1)!.response.instructions).not.toContain("That's everything.");
+    expect(t.scripted().at(-1)!.response.input[0].content[0].text).toContain('Sukkos');
+    expect(t.scripted().at(-1)!.response.input[0].content[0].text).not.toContain("That's everything.");
   });
 
   it('sends only via keypad 1, then hangs up after the goodbye is spoken', async () => {
@@ -202,7 +204,7 @@ describe('realtime adapter', () => {
     expect(t.scripted().length).toBe(before); // held back
     await t.call.onEvent({ type: 'input_audio_buffer.dtmf_event_received', event: '3' }); // not lost while waiting
     t.timers.at(-1)!.fn();
-    expect(t.scripted().at(-1)!.response.instructions).toContain('can I borrow the sefer');
+    expect(t.scripted().at(-1)!.response.input[0].content[0].text).toContain('can I borrow the sefer');
     expect(t.notes().at(-1)).toMatch(/Keypad 3/);
   });
 
