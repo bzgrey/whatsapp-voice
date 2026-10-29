@@ -139,7 +139,7 @@ If the call drops before I confirm, the draft is saved and offered at the start 
 ### 6.2 Conversation style
 After the automatic briefing, it's free conversation. No menus. Voice commands include: next / skip, repeat, more, read it, translate, reply, send to…, flag / unflag / mute / unmute, what did X say…, goodbye.
 
-**Repeating.** Everything read out (briefing parts, chats read or summarized on request) is kept word for word, so it can be said again exactly, never paraphrased from the model's memory: the last part ("repeat that", keypad 3), one chat's part ("what did Yossi say again?"), or the whole briefing. This covers the current call and earlier ones ("what was in my last briefing?"); a chat's part comes from the most recent call that read it. A repeat in the middle of the briefing puts the interrupted part back and carries on afterwards. The kept text is deleted with the messages it quotes (§10.8).
+**Repeating.** Everything read out (briefing parts, chats read or summarized on request) is kept word for word, so it can be said again exactly, never paraphrased from the model's memory: the last part ("repeat that", keypad 3; asking again goes one part further back), one chat's part ("what did Yossi say again?"), or the whole briefing. This covers the current call and earlier ones ("what was in my last briefing?"); a chat's part comes from the most recent call that read it. A repeat in the middle of the briefing puts the interrupted part back and carries on afterwards. The kept text is deleted with the messages it quotes (§10.8).
 
 ### 6.3 Keypad shortcuts (DTMF)
 Voice always works; the keypad is a fallback for noisy rooms and misrecognition.

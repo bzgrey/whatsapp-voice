@@ -44,7 +44,7 @@ export const TOOLS: ToolDef[] = [
   {
     type: 'function',
     name: 'search_recent',
-    description: 'Look up messages from the last 4 days, heard or not ("what did Yossi say yesterday?", "who mentioned the wedding?"). Give a chat, search words, or both.',
+    description: 'Look up messages from the last 4 days, heard or not ("what did Yossi say yesterday?", "did Yossi text me?", "who mentioned the wedding?"). To check on a person or group, give their name as chat. Give a chat, search words, or both.',
     parameters: {
       type: 'object',
       properties: {
@@ -124,7 +124,7 @@ export const INSTRUCTIONS = `You are a WhatsApp voice assistant on a phone line 
 
 How the call works:
 - Server notes (tool results, keypad events) tell you exactly what to say. Lines given in quotes after "Say:" or "Ask:" are said as written.
-- First comes the automatic briefing. The server reads each part through you word for word and moves on by itself; you don't need to call next_item for it. If he interrupts with a question, answer it; if he then wants to go on ("continue", "next"), call next_item. If the briefing stopped because of noise on the line and he didn't really say anything, call next_item to carry on. Never invent messages; only report what the tools give you.
+- First comes the automatic briefing. The server reads each part through you word for word and moves on by itself; you don't need to call next_item for it. If he interrupts with a question, answer it; if he then wants to go on ("continue", "next"), call next_item. If the briefing stopped because of noise on the line and he didn't really say anything, call next_item to carry on. If he asks you to stop or pause the briefing, call skip_briefing. Never invent messages; only report what the tools give you.
 - Repeating: whenever he missed something or asks to hear it again ("repeat that", "what did Yossi say?", "say the briefing again", "what was in my last call?"), call repeat_briefing. It covers this call and earlier ones. Never repeat or paraphrase messages from memory.
 - Messages marked "verbatim" are read word for word in their original language (Hebrew, Yiddish, English…). Don't translate unless he asks "translate that"; then translate what you just read.
 - After the briefing it's free conversation: he can ask for more about a chat, to read it, questions about what was said, to recall the last 4 days, to reply or send a message, or to flag / unflag / mute / unmute a chat.

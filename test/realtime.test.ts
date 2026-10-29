@@ -157,6 +157,38 @@ describe('realtime adapter', () => {
     expect(t.scripted().at(-1)!.response.input[0].content[0].text).toContain('can I borrow the sefer');
   });
 
+  it('after noise cuts off a part, tells the model what was cut and picks the briefing up again', async () => {
+    const t = setup(undefined, (s) => addMessage(s, MOM, { raw_text: 'are you coming home for Sukkos' }));
+    await t.call.start();
+    await t.spoke('1 flagged.', 'continue', 'cancelled'); // a cough on the line
+    expect(t.notes().at(-1)).toMatch(/cut off the briefing part about Mom/);
+    const before = t.scripted().length;
+    await t.call.onEvent({ type: 'response.created' });
+    await t.done([t.said('Sorry, go ahead.')]); // the model answers the noise
+    expect(t.scripted().length).toBe(before); // waits a moment first
+    t.timers.at(-1)!.fn();
+    await new Promise((r) => setImmediate(r));
+    expect(t.scripted().length).toBe(before + 1);
+    expect(t.scripted().at(-1)!.response.input[0].content[0].text).toContain('Sukkos');
+  });
+
+  it('does not pick the briefing up if the model asked him something, or he starts talking', async () => {
+    const t = setup(undefined, (s) => addMessage(s, MOM, { raw_text: 'are you coming home for Sukkos' }));
+    await t.call.start();
+    await t.spoke('1 flagged.', 'continue', 'cancelled');
+    await t.call.onEvent({ type: 'response.created' });
+    await t.done([t.said('Which chat do you mean?')]);
+    const timers = t.timers.length;
+    await t.call.onEvent({ type: 'response.created' });
+    await t.done([t.said('Okay.')]);
+    expect(t.timers.length).toBe(timers + 1); // planned...
+    await t.call.onEvent({ type: 'input_audio_buffer.speech_started' }); // ...but he speaks
+    const before = t.scripted().length;
+    t.timers.at(-1)!.fn();
+    await new Promise((r) => setImmediate(r));
+    expect(t.scripted().length).toBe(before);
+  });
+
   it('being talked over does not use up the retries for a part', async () => {
     const t = setup(undefined, (s) => addMessage(s, MOM, { raw_text: 'are you coming home for Sukkos' }));
     await t.call.start();

@@ -334,11 +334,43 @@ describe('repeating what was read', () => {
     expect(t.store.unheard()).toHaveLength(1); // not yet said
   });
 
-  it('keypad 3 says the last part again', async () => {
+  it('keypad 3 says the last chat again (not "That\'s everything."), and one further back each press', async () => {
     const t = setup();
     const s = await briefed(t);
     const r = await s.dtmf('3');
-    expect(r!.script!.text).toContain("That's everything.");
+    expect(r!.script!.text).toMatch(/^Yossi Cohen, 1 message/);
+    s.confirmSpoken();
+    expect((await s.dtmf('3'))!.script!.text).toContain('Sukkos'); // "before that"
+    s.confirmSpoken();
+    expect((await s.dtmf('3'))!.script!.text).toBe('That was the first one.');
+  });
+
+  it('a repeat with nothing read yet on this call gives the whole previous briefing', async () => {
+    const t = setup();
+    (await briefed(t)).end();
+    const s2 = t.call();
+    await s2.opening();
+    s2.confirmSpoken(); // "No new messages. That's everything."
+    const r = await s2.tool('repeat_briefing', {});
+    expect(r.script!.text).toMatch(/^From your last call: .*Sukkos/);
+    s2.confirmSpoken();
+    expect((await s2.tool('next_item', {})).script!.text).toMatch(/Yossi Cohen/);
+  });
+
+  it('a roll-call chat only half read is not marked heard', async () => {
+    const t = setup();
+    addMessage(t.store, YOSSI, { raw_text: 'x' });
+    addMessage(t.store, DOVID_C, { raw_text: 'y' });
+    t.store.setSummary(YOSSI, 'answering your Shabbat invitation question: they would be happy to host you', 999999);
+    t.store.setSummary(DOVID_C, 'answering whether he will be at the wedding: accompanying Nakbali, arriving right at the start', 999999);
+    const s = t.call();
+    const open = await s.opening();
+    expect(open.script!.text).not.toMatch(/Yossi.*Dovid|Dovid.*Yossi/s); // one chat per part
+    s.confirmSpoken('Dovid Cohen, one message: answering whether he will be at the wedding');
+    expect(t.store.unheardForChat(DOVID_C)).toHaveLength(1); // the rest of the line was skipped
+    s.confirmSpoken('accompanying Nakbali, arriving right at the start');
+    expect(t.store.unheardForChat(DOVID_C)).toHaveLength(0);
+    expect(t.store.unheardForChat(YOSSI)).toHaveLength(1);
   });
 
   it('says so when there is nothing to repeat, and points to read_chat for a chat never read', async () => {
@@ -362,6 +394,16 @@ describe('repeating what was read', () => {
 });
 
 describe('search', () => {
+  it('treats a search for a name as a look at that chat, heard or not', async () => {
+    const t = setup();
+    addMessage(t.store, YOSSI, { raw_text: 'can I borrow the sefer', heard_at: NOW - 60 } as any);
+    const s = t.call();
+    await s.opening();
+    const r = await s.tool('search_recent', { queries: ['Yossi Cohen', 'יוסי כהן'] });
+    expect(r.output).toContain('Chat with Yossi Cohen');
+    expect(r.output).toContain('can I borrow the sefer');
+  });
+
   it('matches any of the words given, so Hebrew and English both work', async () => {
     const t = setup();
     addMessage(t.store, YOSSI, { raw_text: 'החתונה ביום חמישי' });

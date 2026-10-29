@@ -8,8 +8,8 @@ import { messageContent, renderMessages, wordCount, WORDS_PER_SECOND } from './r
 export const LONG_CHAT_WORDS = 75;
 /** Above this, all flagged content together is too long to read unasked (~1 min). */
 export const FLAGGED_BUDGET_WORDS = 150;
-/** Roll-call lines handed to the model per item. */
-export const ROLLCALL_BATCH = 3;
+/** Roll-call lines per part: one, so each chat is judged said (and marked heard) on its own. */
+export const ROLLCALL_BATCH = 1;
 
 export interface ChatGroup {
   jid: string;

@@ -25,12 +25,12 @@ describe('briefing order', () => {
     const { items, counts } = buildBriefing(gatherUnheard(store), store);
     expect(counts).toEqual({ urgent: 1, flagged: 1, others: 3 });
     expect(countsSentence(counts)).toBe('1 urgent, 1 flagged, 3 others.');
-    expect(items.map((i) => i.kind)).toEqual(['urgent', 'flagged', 'rollcall']);
-    const rollcall = items[2]!;
-    if (rollcall.kind !== 'rollcall') throw new Error();
+    // One roll-call chat per part, so each is judged said on its own.
+    expect(items.map((i) => i.kind)).toEqual(['urgent', 'flagged', 'rollcall', 'rollcall', 'rollcall']);
+    const entries = items.slice(2).flatMap((i) => (i.kind === 'rollcall' ? i.entries : []));
     // Urgent-containing chat first, then most recent.
-    expect(rollcall.entries.map((e) => e.jid)).toEqual([DOVID_C, FAMILY, YOSSI]);
-    expect(rollcall.entries[2]!.line).toBe('1 message: asking to borrow your sefer');
+    expect(entries.map((e) => e.jid)).toEqual([DOVID_C, FAMILY, YOSSI]);
+    expect(entries[2]!.line).toBe('1 message: asking to borrow your sefer');
     expect(itemPrompt(items[0]!)).toContain('Abba is in the hospital');
   });
 
@@ -62,8 +62,7 @@ describe('briefing order', () => {
     addMessage(store, YOSSI, { type: 'reaction', raw_text: '👍', is_trivial: 1 });
     addMessage(store, DOVID_C, { raw_text: 'see you at 8' });
     const { items } = buildBriefing(gatherUnheard(store), store);
-    if (items[0]!.kind !== 'rollcall') throw new Error();
-    expect(items[0]!.entries.map((e) => e.line)).toEqual(['1 message: see you at 8', 'just a reaction']);
+    expect(items.flatMap((i) => (i.kind === 'rollcall' ? i.entries : [])).map((e) => e.line)).toEqual(['1 message: see you at 8', 'just a reaction']);
   });
 });
 

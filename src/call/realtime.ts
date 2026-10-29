@@ -55,6 +55,8 @@ export class RealtimeCall {
   private waiting = false;
   /** Instructions for after the forced part now being spoken; added to the conversation once it ends. */
   private afterNote: string | null = null;
+  /** Bumped whenever he speaks or a response starts, cancelling a planned resume. */
+  private resumeToken = 0;
 
   constructor(
     private session: CallSession,
@@ -91,11 +93,13 @@ export class RealtimeCall {
     switch (ev.type) {
       case 'response.created':
         this.responding = true;
+        this.resumeToken++;
         return;
       case 'response.done':
         return this.responseDone(ev);
       case 'input_audio_buffer.speech_started':
         this.userSpeaking = true;
+        this.resumeToken++;
         return;
       case 'input_audio_buffer.speech_stopped':
         this.userSpeaking = false;
@@ -129,6 +133,12 @@ export class RealtimeCall {
     this.logUsage(r.usage);
     const completed = r.status === 'completed';
     if (r.status === 'cancelled') this.session.interrupted();
+    const cutOff = r.status === 'cancelled' && r.metadata?.script === 'continue' ? this.session.resumable : null;
+    if (cutOff) {
+      // Before the model answers whatever cut it off (often just line noise), tell it what was cut.
+      this.io.send(noteItem(`He cut off the briefing part about ${cutOff}. Answer him if he asked something; `
+        + 'if he only wants it to go on, or said nothing real, call next_item. The server carries on by itself if he says nothing more.'));
+    }
     if (this.afterNote) {
       // Now that the part is over (said or cut off), tell the model what comes next.
       this.io.send(noteItem(this.afterNote));
@@ -156,6 +166,16 @@ export class RealtimeCall {
       return;
     }
 
+    if (completed && !scripted && !calls.length && this.session.resumable && !/\?\W*$/.test(transcripts.join(' '))) {
+      // The model answered an interruption without asking anything back: once that has
+      // played and he stays quiet, pick the briefing up again rather than stall.
+      const token = this.resumeToken;
+      this.io.later(() => {
+        if (token !== this.resumeToken || this.responding || this.userSpeaking || this.waiting || this.hungUp) return;
+        this.queue = this.queue.then(() => this.resume()).catch((err) => log.error(`call ${this.session.callId}: ${errMsg(err)}`));
+      }, Math.max(0, this.playoutUntil - this.io.now()) + RESUME_AFTER_MS);
+    }
+
     const outputs: object[] = [];
     let pauseMs = 0;
     let script: Script | undefined;
@@ -180,6 +200,15 @@ export class RealtimeCall {
       outputs.push({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: c.call_id, output } });
     }
     this.schedule(outputs, script, pauseMs);
+  }
+
+  /** Say the cut-off briefing part again and carry on. */
+  private async resume() {
+    if (!this.session.resumable || this.responding) return;
+    const out = await this.session.tool('next_item', {});
+    log.info(`call ${this.session.callId}: resuming the briefing after an interruption`);
+    if (out.hangup) this.armHangup();
+    this.schedule([], out.script, 0, out.script ? undefined : out.output);
   }
 
   /** Send these (and any queued notes) and start the next response, after a pause if asked. */
@@ -288,6 +317,9 @@ export class RealtimeCall {
     }, Math.floor(Date.now() / 1000));
   }
 }
+
+/** Silence after the model's reply to an interruption before the briefing picks up again. */
+export const RESUME_AFTER_MS = 2000;
 
 /** A tool's result when the server speaks it itself through a forced response. */
 const SCRIPTED_TOOL_OUTPUT = 'The server is reading this to him through you, word for word.';
